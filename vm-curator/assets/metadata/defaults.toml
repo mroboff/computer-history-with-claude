@@ -1,0 +1,273 @@
+# Default OS metadata for vm-curator
+# This file is embedded at compile time
+
+[windows-95]
+name = "Windows 95"
+publisher = "Microsoft Corporation"
+release_date = "1995-08-24"
+architecture = "i386"
+
+[windows-95.blurb]
+short = "The OS that changed everything - Start Menu, taskbar, and 32-bit computing for the masses."
+long = """
+Windows 95 was a landmark release that fundamentally changed personal computing. It introduced the Start Menu, taskbar, and desktop metaphors that would define Windows for decades to come.
+
+Released on August 24, 1995, it was a consumer-oriented operating system that combined the features of MS-DOS with a 32-bit protected mode kernel. The launch was accompanied by a massive marketing campaign featuring the Rolling Stones' "Start Me Up."
+
+Windows 95 introduced Plug and Play, long file names (up to 255 characters), and the Windows Explorer file manager. It was also the first Windows version to include Internet Explorer."""
+
+[windows-95.fun_facts]
+facts = [
+    "The startup sound was composed by Brian Eno in just one day",
+    "Microsoft paid $3 million to license 'Start Me Up' for the launch",
+    "The release was so anticipated that stores opened at midnight",
+    "Bill Gates personally demonstrated Windows 95 on The Tonight Show"
+]
+
+[windows-98]
+name = "Windows 98"
+publisher = "Microsoft Corporation"
+release_date = "1998-06-25"
+architecture = "i386"
+
+[windows-98.blurb]
+short = "The refined successor to Windows 95, bringing USB support and better internet integration."
+long = """
+Windows 98 built on the foundation of Windows 95, adding native USB support, FAT32 filesystem, and deeper Internet Explorer integration. The Windows Desktop Update brought the Active Desktop feature.
+
+The Second Edition (SE) release in 1999 fixed many bugs and added Internet Connection Sharing, making it easier to share a single internet connection among multiple computers."""
+
+[windows-98.fun_facts]
+facts = [
+    "Windows 98 famously crashed during its live demo at COMDEX 1998",
+    "Bill Gates quipped 'That must be why we're not shipping Windows 98 yet'",
+    "It was the last version of Windows based on MS-DOS"
+]
+
+[windows-me]
+name = "Windows Millennium Edition"
+publisher = "Microsoft Corporation"
+release_date = "2000-09-14"
+architecture = "i386"
+
+[windows-me.blurb]
+short = "The final DOS-based Windows, known for System Restore and Windows Movie Maker."
+long = """
+Windows ME (Millennium Edition) was the last operating system in the Windows 9x line. It introduced System Restore, Windows Movie Maker, and an updated Windows Media Player.
+
+While criticized for stability issues, it removed real-mode DOS access in favor of a pure 32-bit environment. It served as a bridge between the consumer Windows 9x line and the NT-based Windows XP."""
+
+[windows-me.fun_facts]
+facts = [
+    "ME stands for 'Millennium Edition'",
+    "It was only supported by Microsoft for 5 years",
+    "PC World named it the 4th worst tech product of all time"
+]
+
+[windows-xp]
+name = "Windows XP"
+publisher = "Microsoft Corporation"
+release_date = "2001-10-25"
+architecture = "i386"
+
+[windows-xp.blurb]
+short = "The legendary NT-based consumer Windows that defined a generation of computing."
+long = """
+Windows XP unified Microsoft's consumer and business operating systems under the Windows NT architecture. With its Luna visual style and improved stability, XP became one of the most beloved Windows versions.
+
+XP introduced Fast User Switching, ClearType font rendering, and Remote Desktop. It remained in use for over a decade, with extended support ending only in 2014."""
+
+[windows-xp.fun_facts]
+facts = [
+    "The default wallpaper 'Bliss' is an unedited photo of Napa Valley",
+    "Photographer Charles O'Rear took it with a medium format camera",
+    "XP stood for 'eXPerience'",
+    "Over 400 million copies were sold in its first five years"
+]
+
+[windows-7]
+name = "Windows 7"
+publisher = "Microsoft Corporation"
+release_date = "2009-10-22"
+architecture = "x86_64"
+
+[windows-7.blurb]
+short = "The refined successor to Vista, bringing the Aero interface and improved performance."
+long = """
+Windows 7 addressed many criticisms of Windows Vista with improved performance, a refined Aero interface, and better hardware compatibility. It introduced the taskbar thumbnail previews, Aero Snap, and Libraries.
+
+Windows 7 remained popular for years, becoming a benchmark for Windows usability. Many users held onto it even after Windows 8 and 10 were released."""
+
+[windows-7.fun_facts]
+facts = [
+    "Windows 7 was codenamed 'Blackcomb' and later 'Vienna'",
+    "It sold over 100 million copies in its first six months",
+    "The Windows 7 release party kit became an internet meme"
+]
+
+[windows-10]
+name = "Windows 10"
+publisher = "Microsoft Corporation"
+release_date = "2015-07-29"
+architecture = "x86_64"
+
+[windows-10.blurb]
+short = "Microsoft's 'Windows as a Service' platform with continuous updates."
+long = """
+Windows 10 marked Microsoft's shift to 'Windows as a Service,' with continuous feature updates rather than major version releases. It brought back the Start Menu (removed in Windows 8) and introduced Cortana and the Edge browser.
+
+The Universal Windows Platform (UWP) allowed apps to run across devices from phones to Xbox to desktop PCs."""
+
+[windows-10.fun_facts]
+facts = [
+    "Microsoft skipped Windows 9, supposedly due to legacy code checking for 'Windows 9*'",
+    "Windows 10 was offered as a free upgrade from Windows 7 and 8",
+    "The initial release was codenamed 'Threshold'"
+]
+
+[windows-11]
+name = "Windows 11"
+publisher = "Microsoft Corporation"
+release_date = "2021-10-05"
+architecture = "x86_64"
+
+[windows-11.blurb]
+short = "The modern Windows with centered taskbar and Android app support."
+long = """
+Windows 11 introduced a centered Start Menu, rounded corners, and deeper Teams integration. It controversially required TPM 2.0 and specific CPUs, limiting which PCs could officially upgrade.
+
+Native Android app support through the Windows Subsystem for Android brought mobile apps to the desktop."""
+
+[windows-11.fun_facts]
+facts = [
+    "Microsoft had previously said Windows 10 would be 'the last version of Windows'",
+    "The default wallpaper is an actual physical bloom created for the launch",
+    "The startup sound was composed to be 'calming' and play at 4kHz"
+]
+
+[mac-system7]
+name = "Macintosh System 7"
+publisher = "Apple Computer, Inc."
+release_date = "1991-05-13"
+architecture = "m68k"
+
+[mac-system7.blurb]
+short = "The first Mac OS to support 32-bit addressing and virtual memory."
+long = """
+System 7 was a major release for the Macintosh, introducing 32-bit addressing, virtual memory, and the ability to use more than 8 MB of RAM. It also brought aliases, Publish and Subscribe, and TrueType fonts.
+
+System 7 was the first Mac OS to require a hard drive and 2 MB of RAM minimum. The Finder was completely rewritten and introduced the familiar spatial metaphor."""
+
+[mac-system7.fun_facts]
+facts = [
+    "System 7 was the last Mac OS to be sold in floppy disk format",
+    "It introduced the 'happy Mac' startup icon that lasted until OS X",
+    "The 'About This Macintosh' dialog egg hid the names of developers"
+]
+
+[mac-os9]
+name = "Mac OS 9"
+publisher = "Apple Computer, Inc."
+release_date = "1999-10-23"
+architecture = "m68k/ppc"
+
+[mac-os9.blurb]
+short = "The final 'Classic' Mac OS before the Unix-based Mac OS X."
+long = """
+Mac OS 9 was marketed as 'the best internet operating system ever' and introduced multiple users, Sherlock 2, and improved iTools integration. It was the last version of the 'Classic' Mac OS.
+
+Steve Jobs famously held a mock funeral for Mac OS 9 at WWDC 2002, marking Apple's full transition to OS X."""
+
+[mac-os9.fun_facts]
+facts = [
+    "Mac OS 9 could run in 'Classic' mode within Mac OS X",
+    "It was the last Mac OS to support 68k processors (in software)",
+    "Apple sold 1.6 million copies in the first two weeks"
+]
+
+[mac-osx-tiger]
+name = "Mac OS X Tiger"
+publisher = "Apple Computer, Inc."
+release_date = "2005-04-29"
+architecture = "ppc"
+
+[mac-osx-tiger.blurb]
+short = "The Unix-based Mac with Spotlight search and Dashboard widgets."
+long = """
+Mac OS X 10.4 Tiger introduced Spotlight desktop search, Dashboard widgets, Automator, and Safari RSS. It was the last version to support the PowerPC architecture in its initial release.
+
+Tiger was considered a major step forward for Mac OS X, bringing system-wide search and making the Unix underpinnings more accessible through Automator."""
+
+[mac-osx-tiger.fun_facts]
+facts = [
+    "Tiger was the longest-running version of Mac OS X at over 2.5 years",
+    "It was used for the first Intel-based Macs (though released for PPC)",
+    "Dashboard was heavily inspired by the Konfabulator widget engine"
+]
+
+[linux-fedora]
+name = "Fedora Linux"
+publisher = "Red Hat / Fedora Project"
+release_date = "2003-11-06"
+architecture = "x86_64"
+
+[linux-fedora.blurb]
+short = "A cutting-edge Linux distribution sponsored by Red Hat."
+long = """
+Fedora is a community-driven Linux distribution sponsored by Red Hat that serves as a proving ground for technologies that later appear in Red Hat Enterprise Linux. It's known for being on the cutting edge of Linux development.
+
+Fedora was one of the first distributions to adopt GNOME 3, systemd, and Wayland. It follows a roughly six-month release cycle."""
+
+[linux-fedora.fun_facts]
+facts = [
+    "Fedora is named after Red Hat's fedora logo",
+    "Linus Torvalds uses Fedora as his primary desktop",
+    "Fedora Silverblue offers an immutable desktop variant"
+]
+
+[ms-dos]
+name = "MS-DOS"
+publisher = "Microsoft Corporation"
+release_date = "1981-08-12"
+architecture = "i386"
+
+[ms-dos.blurb]
+short = "The operating system that launched the PC revolution."
+long = """
+MS-DOS (Microsoft Disk Operating System) was the foundation of the IBM PC compatible ecosystem. Originally purchased from Seattle Computer Products as QDOS, Microsoft licensed it to IBM and later sold it directly.
+
+DOS provided a simple command-line interface with core utilities like DIR, COPY, and FORMAT. It remained relevant for over two decades and ran early versions of Windows."""
+
+[ms-dos.fun_facts]
+facts = [
+    "DOS was originally called QDOS (Quick and Dirty Operating System)",
+    "Microsoft paid $25,000 for the rights to DOS",
+    "IBM originally wanted to license CP/M from Digital Research",
+    "MS-DOS 4.01 was considered so buggy that many users downgraded"
+]
+
+[my-first-pc]
+name = "My First PC (DOS + Windows 3.1)"
+publisher = "Microsoft Corporation"
+release_date = "1992-04-06"
+architecture = "i386"
+
+[my-first-pc.blurb]
+short = "Experience the early 90s PC with DOS and Windows 3.1."
+long = """
+This VM recreates the classic early 1990s PC experience: booting to DOS and launching Windows 3.1. Windows 3.1 was the first commercially successful version of Windows, selling over 10 million copies in its first two months.
+
+Windows 3.1 introduced TrueType fonts, OLE (Object Linking and Embedding), and multimedia extensions. It was the version of Windows that finally convinced many users to leave DOS applications behind."""
+
+[my-first-pc.install_steps]
+steps = [
+    { number = 1, title = "Install MS-DOS", instructions = "Boot from DOS disk and run FDISK to partition, then FORMAT C: /S", boot_mode = "install", completion_hint = "You should see the C:\\> prompt" },
+    { number = 2, title = "Install Windows 3.1", instructions = "Insert Windows 3.1 disk and run SETUP from DOS", boot_mode = "normal", completion_hint = "Windows Program Manager should launch" }
+]
+
+[my-first-pc.fun_facts]
+facts = [
+    "Windows 3.1 required only 1 MB of RAM",
+    "The 'Solitaire' game was included to teach mouse skills",
+    "Minesweeper taught users about right-clicking"
+]
