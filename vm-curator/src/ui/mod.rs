@@ -352,6 +352,21 @@ fn render(app: &App, frame: &mut Frame) {
             render_dim_overlay(frame);
             render_error_dialog(app, frame);
         }
+        Screen::CreateWizard => {
+            screens::main_menu::render(app, frame);
+            render_dim_overlay(frame);
+            screens::create_wizard::render(app, frame);
+        }
+        Screen::CreateWizardCustomOs => {
+            screens::main_menu::render(app, frame);
+            render_dim_overlay(frame);
+            screens::create_wizard::render_custom_os(app, frame);
+        }
+        Screen::CreateWizardDownload => {
+            screens::main_menu::render(app, frame);
+            render_dim_overlay(frame);
+            screens::create_wizard::render_download(app, frame);
+        }
     }
 }
 
@@ -365,7 +380,7 @@ fn handle_key(app: &mut App, key: KeyEvent) -> Result<()> {
 
     // Global quit with q/Q (except in text input modes where q might be typed)
     if (key.code == KeyCode::Char('q') || key.code == KeyCode::Char('Q'))
-        && !matches!(app.screen, Screen::Search | Screen::TextInput(_))
+        && !matches!(app.screen, Screen::Search | Screen::TextInput(_) | Screen::RawScript | Screen::CreateWizard | Screen::CreateWizardCustomOs)
     {
         app.should_quit = true;
         return Ok(());
@@ -386,6 +401,9 @@ fn handle_key(app: &mut App, key: KeyEvent) -> Result<()> {
         Screen::FileBrowser => handle_file_browser(app, key)?,
         Screen::TextInput(context) => handle_text_input(app, context.clone(), key)?,
         Screen::ErrorDialog => handle_error_dialog(app, key)?,
+        Screen::CreateWizard => screens::create_wizard::handle_key(app, key)?,
+        Screen::CreateWizardCustomOs => screens::create_wizard::handle_custom_os_key(app, key)?,
+        Screen::CreateWizardDownload => screens::create_wizard::handle_download_key(app, key)?,
     }
 
     Ok(())
@@ -416,6 +434,9 @@ fn handle_main_menu(app: &mut App, key: KeyEvent) -> Result<()> {
             app.push_screen(Screen::Search);
         }
         KeyCode::Char('?') => app.push_screen(Screen::Help),
+        KeyCode::Char('c') | KeyCode::Char('C') => {
+            app.start_create_wizard();
+        }
         _ => {}
     }
     Ok(())

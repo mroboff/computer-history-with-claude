@@ -1,0 +1,2487 @@
+# QEMU Configuration Profiles for VM Curator
+# This file contains OS-specific QEMU defaults for all supported operating systems.
+# Profiles can be overridden in ~/.config/vm-curator/qemu_profiles.toml
+#
+# Fields:
+#   display_name - Human-readable OS name (matches defaults.toml)
+#   category - OS category (windows, linux, bsd, unix, classic-mac, alternative, retro)
+#   emulator - QEMU command (qemu-system-x86_64, qemu-system-i386, etc.)
+#   memory_mb - Default RAM in megabytes
+#   cpu_cores - Default CPU cores
+#   cpu_model - CPU emulation model (host, qemu64, pentium, etc.)
+#   machine - Machine type (q35, pc, etc.)
+#   vga - Graphics adapter (qxl, virtio, std, cirrus, vmware)
+#   audio - Audio devices ["intel-hda", "hda-duplex"] or ["ac97"] or ["sb16"]
+#   network_model - Network adapter (virtio, e1000, rtl8139, ne2k_pci, pcnet)
+#   disk_interface - Disk interface (virtio, ide, sata, scsi)
+#   disk_size_gb - Default disk size in gigabytes
+#   enable_kvm - Enable KVM acceleration
+#   uefi - Boot in UEFI mode
+#   tpm - Enable TPM emulation
+#   rtc_localtime - Set RTC to local time (for Windows)
+#   usb_tablet - Use USB tablet for mouse (better pointer)
+#   display - Display output (gtk, sdl, spice, vnc)
+#   extra_args - Additional QEMU arguments
+#   iso_url - Download URL for free/open-source OSes (optional)
+#   notes - Tips for this OS (optional)
+
+# =============================================================================
+# Microsoft Windows - Modern (x86_64)
+# =============================================================================
+
+[windows-11]
+display_name = "Windows 11"
+category = "windows"
+emulator = "qemu-system-x86_64"
+memory_mb = 8192
+cpu_cores = 4
+cpu_model = "host"
+machine = "q35"
+vga = "qxl"
+audio = ["intel-hda", "hda-duplex"]
+network_model = "e1000"
+disk_interface = "sata"
+disk_size_gb = 128
+enable_kvm = true
+uefi = true
+tpm = true
+rtc_localtime = true
+usb_tablet = true
+display = "gtk"
+extra_args = []
+notes = "Requires TPM 2.0 and Secure Boot. UEFI mode mandatory."
+
+[windows-10]
+display_name = "Windows 10"
+category = "windows"
+emulator = "qemu-system-x86_64"
+memory_mb = 4096
+cpu_cores = 4
+cpu_model = "host"
+machine = "q35"
+vga = "qxl"
+audio = ["intel-hda", "hda-duplex"]
+network_model = "e1000"
+disk_interface = "sata"
+disk_size_gb = 64
+enable_kvm = true
+uefi = false
+tpm = false
+rtc_localtime = true
+usb_tablet = true
+display = "gtk"
+extra_args = []
+notes = "UEFI optional but recommended for newer installs."
+
+[windows-81]
+display_name = "Windows 8.1"
+category = "windows"
+emulator = "qemu-system-x86_64"
+memory_mb = 4096
+cpu_cores = 2
+cpu_model = "host"
+machine = "q35"
+vga = "qxl"
+audio = ["intel-hda", "hda-duplex"]
+network_model = "e1000"
+disk_interface = "ide"
+disk_size_gb = 64
+enable_kvm = true
+uefi = false
+tpm = false
+rtc_localtime = true
+usb_tablet = true
+display = "gtk"
+extra_args = []
+
+[windows-8]
+display_name = "Windows 8"
+category = "windows"
+emulator = "qemu-system-x86_64"
+memory_mb = 4096
+cpu_cores = 2
+cpu_model = "host"
+machine = "q35"
+vga = "qxl"
+audio = ["intel-hda", "hda-duplex"]
+network_model = "e1000"
+disk_interface = "ide"
+disk_size_gb = 64
+enable_kvm = true
+uefi = false
+tpm = false
+rtc_localtime = true
+usb_tablet = true
+display = "gtk"
+extra_args = []
+
+[windows-7]
+display_name = "Windows 7"
+category = "windows"
+emulator = "qemu-system-x86_64"
+memory_mb = 4096
+cpu_cores = 4
+cpu_model = "host"
+machine = "q35"
+vga = "qxl"
+audio = ["intel-hda", "hda-duplex"]
+network_model = "e1000"
+disk_interface = "ide"
+disk_size_gb = 64
+enable_kvm = true
+uefi = false
+tpm = false
+rtc_localtime = true
+usb_tablet = true
+display = "gtk"
+extra_args = []
+notes = "IDE interface recommended for best compatibility."
+
+[windows-vista]
+display_name = "Windows Vista"
+category = "windows"
+emulator = "qemu-system-x86_64"
+memory_mb = 2048
+cpu_cores = 2
+cpu_model = "host"
+machine = "pc"
+vga = "qxl"
+audio = ["intel-hda", "hda-duplex"]
+network_model = "e1000"
+disk_interface = "ide"
+disk_size_gb = 40
+enable_kvm = true
+uefi = false
+tpm = false
+rtc_localtime = true
+usb_tablet = true
+display = "gtk"
+extra_args = []
+
+# =============================================================================
+# Microsoft Windows - XP/2000/NT (i386/x86_64)
+# =============================================================================
+
+[windows-xp]
+display_name = "Windows XP"
+category = "windows"
+emulator = "qemu-system-i386"
+memory_mb = 512
+cpu_cores = 1
+cpu_model = "pentium3"
+machine = "pc"
+vga = "std"
+audio = ["ac97"]
+network_model = "rtl8139"
+disk_interface = "ide"
+disk_size_gb = 16
+enable_kvm = true
+uefi = false
+tpm = false
+rtc_localtime = true
+usb_tablet = true
+display = "gtk"
+extra_args = []
+notes = "Use pentium3 CPU model for best compatibility. RTL8139 has built-in drivers."
+
+[windows-2000]
+display_name = "Windows 2000"
+category = "windows"
+emulator = "qemu-system-i386"
+memory_mb = 512
+cpu_cores = 1
+cpu_model = "pentium3"
+machine = "pc"
+vga = "std"
+audio = ["ac97"]
+network_model = "rtl8139"
+disk_interface = "ide"
+disk_size_gb = 8
+enable_kvm = true
+uefi = false
+tpm = false
+rtc_localtime = true
+usb_tablet = true
+display = "gtk"
+extra_args = []
+
+[windows-nt]
+display_name = "Windows NT 4.0"
+category = "windows"
+emulator = "qemu-system-i386"
+memory_mb = 256
+cpu_cores = 1
+cpu_model = "pentium"
+machine = "pc"
+vga = "std"
+audio = ["sb16"]
+network_model = "ne2k_pci"
+disk_interface = "ide"
+disk_size_gb = 4
+enable_kvm = true
+uefi = false
+tpm = false
+rtc_localtime = true
+usb_tablet = false
+display = "gtk"
+extra_args = []
+notes = "Disable USB tablet; NT4 has limited USB support."
+
+# =============================================================================
+# Microsoft Windows - 9x (i386)
+# =============================================================================
+
+[windows-me]
+display_name = "Windows ME"
+category = "windows"
+emulator = "qemu-system-i386"
+memory_mb = 256
+cpu_cores = 1
+cpu_model = "pentium2"
+machine = "pc"
+vga = "std"
+audio = ["sb16"]
+network_model = "rtl8139"
+disk_interface = "ide"
+disk_size_gb = 8
+enable_kvm = true
+uefi = false
+tpm = false
+rtc_localtime = true
+usb_tablet = false
+display = "gtk"
+extra_args = []
+notes = "Sound Blaster 16 recommended for best audio compatibility."
+
+[windows-98se]
+display_name = "Windows 98 SE"
+category = "windows"
+emulator = "qemu-system-i386"
+memory_mb = 256
+cpu_cores = 1
+cpu_model = "pentium2"
+machine = "pc"
+vga = "std"
+audio = ["sb16"]
+network_model = "rtl8139"
+disk_interface = "ide"
+disk_size_gb = 4
+enable_kvm = true
+uefi = false
+tpm = false
+rtc_localtime = true
+usb_tablet = false
+display = "gtk"
+extra_args = []
+
+[windows-98]
+display_name = "Windows 98"
+category = "windows"
+emulator = "qemu-system-i386"
+memory_mb = 256
+cpu_cores = 1
+cpu_model = "pentium2"
+machine = "pc"
+vga = "std"
+audio = ["sb16"]
+network_model = "rtl8139"
+disk_interface = "ide"
+disk_size_gb = 4
+enable_kvm = true
+uefi = false
+tpm = false
+rtc_localtime = true
+usb_tablet = false
+display = "gtk"
+extra_args = []
+
+[windows-95]
+display_name = "Windows 95"
+category = "windows"
+emulator = "qemu-system-i386"
+memory_mb = 128
+cpu_cores = 1
+cpu_model = "pentium"
+machine = "pc"
+vga = "std"
+audio = ["sb16"]
+network_model = "ne2k_pci"
+disk_interface = "ide"
+disk_size_gb = 2
+enable_kvm = true
+uefi = false
+tpm = false
+rtc_localtime = true
+usb_tablet = false
+display = "gtk"
+extra_args = []
+notes = "Keep RAM at 128MB or below to avoid memory detection issues."
+
+# =============================================================================
+# Microsoft DOS / Windows 3.x (i386)
+# =============================================================================
+
+[ms-dos]
+display_name = "MS-DOS"
+category = "retro"
+emulator = "qemu-system-i386"
+memory_mb = 64
+cpu_cores = 1
+cpu_model = "486"
+machine = "pc"
+vga = "std"
+audio = ["sb16"]
+network_model = "ne2k_pci"
+disk_interface = "ide"
+disk_size_gb = 1
+enable_kvm = true
+uefi = false
+tpm = false
+rtc_localtime = true
+usb_tablet = false
+display = "gtk"
+extra_args = []
+iso_url = "https://www.freedos.org/download/"
+notes = "Consider using FreeDOS for easier setup and modern driver support."
+
+[my-first-pc]
+display_name = "MS-DOS / Windows 3.1"
+category = "retro"
+emulator = "qemu-system-i386"
+memory_mb = 64
+cpu_cores = 1
+cpu_model = "486"
+machine = "pc"
+vga = "std"
+audio = ["sb16"]
+network_model = "ne2k_pci"
+disk_interface = "ide"
+disk_size_gb = 1
+enable_kvm = true
+uefi = false
+tpm = false
+rtc_localtime = true
+usb_tablet = false
+display = "gtk"
+extra_args = []
+notes = "Install DOS first, then Windows 3.1 from within DOS."
+
+# =============================================================================
+# Linux - Arch-based (x86_64)
+# =============================================================================
+
+[linux-arch]
+display_name = "Arch Linux"
+category = "linux"
+emulator = "qemu-system-x86_64"
+memory_mb = 2048
+cpu_cores = 2
+cpu_model = "host"
+machine = "q35"
+vga = "virtio"
+audio = ["intel-hda", "hda-duplex"]
+network_model = "virtio"
+disk_interface = "virtio"
+disk_size_gb = 32
+enable_kvm = true
+uefi = false
+tpm = false
+rtc_localtime = false
+usb_tablet = true
+display = "gtk"
+extra_args = []
+iso_url = "https://archlinux.org/download/"
+notes = "Manual installation required. Consider EndeavourOS for a graphical installer."
+
+[linux-manjaro]
+display_name = "Manjaro Linux"
+category = "linux"
+emulator = "qemu-system-x86_64"
+memory_mb = 4096
+cpu_cores = 2
+cpu_model = "host"
+machine = "q35"
+vga = "virtio"
+audio = ["intel-hda", "hda-duplex"]
+network_model = "virtio"
+disk_interface = "virtio"
+disk_size_gb = 40
+enable_kvm = true
+uefi = false
+tpm = false
+rtc_localtime = false
+usb_tablet = true
+display = "gtk"
+extra_args = []
+iso_url = "https://manjaro.org/download/"
+
+[linux-endeavouros]
+display_name = "EndeavourOS"
+category = "linux"
+emulator = "qemu-system-x86_64"
+memory_mb = 2048
+cpu_cores = 2
+cpu_model = "host"
+machine = "q35"
+vga = "virtio"
+audio = ["intel-hda", "hda-duplex"]
+network_model = "virtio"
+disk_interface = "virtio"
+disk_size_gb = 32
+enable_kvm = true
+uefi = false
+tpm = false
+rtc_localtime = false
+usb_tablet = true
+display = "gtk"
+extra_args = []
+iso_url = "https://endeavouros.com/latest-release/"
+
+[linux-garuda]
+display_name = "Garuda Linux"
+category = "linux"
+emulator = "qemu-system-x86_64"
+memory_mb = 4096
+cpu_cores = 2
+cpu_model = "host"
+machine = "q35"
+vga = "virtio"
+audio = ["intel-hda", "hda-duplex"]
+network_model = "virtio"
+disk_interface = "virtio"
+disk_size_gb = 40
+enable_kvm = true
+uefi = false
+tpm = false
+rtc_localtime = false
+usb_tablet = true
+display = "gtk"
+extra_args = []
+iso_url = "https://garudalinux.org/downloads.html"
+
+[linux-cachyos]
+display_name = "CachyOS"
+category = "linux"
+emulator = "qemu-system-x86_64"
+memory_mb = 4096
+cpu_cores = 4
+cpu_model = "host"
+machine = "q35"
+vga = "virtio"
+audio = ["intel-hda", "hda-duplex"]
+network_model = "virtio"
+disk_interface = "virtio"
+disk_size_gb = 40
+enable_kvm = true
+uefi = false
+tpm = false
+rtc_localtime = false
+usb_tablet = true
+display = "gtk"
+extra_args = []
+iso_url = "https://cachyos.org/download/"
+notes = "Performance-optimized distro - benefits from multiple CPU cores."
+
+# =============================================================================
+# Linux - Debian-based (x86_64)
+# =============================================================================
+
+[linux-debian]
+display_name = "Debian GNU/Linux"
+category = "linux"
+emulator = "qemu-system-x86_64"
+memory_mb = 2048
+cpu_cores = 2
+cpu_model = "host"
+machine = "q35"
+vga = "virtio"
+audio = ["intel-hda", "hda-duplex"]
+network_model = "virtio"
+disk_interface = "virtio"
+disk_size_gb = 32
+enable_kvm = true
+uefi = false
+tpm = false
+rtc_localtime = false
+usb_tablet = true
+display = "gtk"
+extra_args = []
+iso_url = "https://www.debian.org/CD/netinst/"
+
+[linux-ubuntu]
+display_name = "Ubuntu"
+category = "linux"
+emulator = "qemu-system-x86_64"
+memory_mb = 4096
+cpu_cores = 2
+cpu_model = "host"
+machine = "q35"
+vga = "virtio"
+audio = ["intel-hda", "hda-duplex"]
+network_model = "virtio"
+disk_interface = "virtio"
+disk_size_gb = 40
+enable_kvm = true
+uefi = false
+tpm = false
+rtc_localtime = false
+usb_tablet = true
+display = "gtk"
+extra_args = []
+iso_url = "https://ubuntu.com/download/desktop"
+
+[linux-mint]
+display_name = "Linux Mint"
+category = "linux"
+emulator = "qemu-system-x86_64"
+memory_mb = 4096
+cpu_cores = 2
+cpu_model = "host"
+machine = "q35"
+vga = "virtio"
+audio = ["intel-hda", "hda-duplex"]
+network_model = "virtio"
+disk_interface = "virtio"
+disk_size_gb = 40
+enable_kvm = true
+uefi = false
+tpm = false
+rtc_localtime = false
+usb_tablet = true
+display = "gtk"
+extra_args = []
+iso_url = "https://linuxmint.com/download.php"
+
+[linux-pop]
+display_name = "Pop!_OS"
+category = "linux"
+emulator = "qemu-system-x86_64"
+memory_mb = 4096
+cpu_cores = 2
+cpu_model = "host"
+machine = "q35"
+vga = "virtio"
+audio = ["intel-hda", "hda-duplex"]
+network_model = "virtio"
+disk_interface = "virtio"
+disk_size_gb = 40
+enable_kvm = true
+uefi = false
+tpm = false
+rtc_localtime = false
+usb_tablet = true
+display = "gtk"
+extra_args = []
+iso_url = "https://pop.system76.com/"
+
+[linux-zorin]
+display_name = "Zorin OS"
+category = "linux"
+emulator = "qemu-system-x86_64"
+memory_mb = 4096
+cpu_cores = 2
+cpu_model = "host"
+machine = "q35"
+vga = "virtio"
+audio = ["intel-hda", "hda-duplex"]
+network_model = "virtio"
+disk_interface = "virtio"
+disk_size_gb = 40
+enable_kvm = true
+uefi = false
+tpm = false
+rtc_localtime = false
+usb_tablet = true
+display = "gtk"
+extra_args = []
+iso_url = "https://zorin.com/os/download/"
+
+[linux-elementary]
+display_name = "elementary OS"
+category = "linux"
+emulator = "qemu-system-x86_64"
+memory_mb = 4096
+cpu_cores = 2
+cpu_model = "host"
+machine = "q35"
+vga = "virtio"
+audio = ["intel-hda", "hda-duplex"]
+network_model = "virtio"
+disk_interface = "virtio"
+disk_size_gb = 40
+enable_kvm = true
+uefi = false
+tpm = false
+rtc_localtime = false
+usb_tablet = true
+display = "gtk"
+extra_args = []
+iso_url = "https://elementary.io/"
+
+[linux-mx]
+display_name = "MX Linux"
+category = "linux"
+emulator = "qemu-system-x86_64"
+memory_mb = 2048
+cpu_cores = 2
+cpu_model = "host"
+machine = "q35"
+vga = "virtio"
+audio = ["intel-hda", "hda-duplex"]
+network_model = "virtio"
+disk_interface = "virtio"
+disk_size_gb = 32
+enable_kvm = true
+uefi = false
+tpm = false
+rtc_localtime = false
+usb_tablet = true
+display = "gtk"
+extra_args = []
+iso_url = "https://mxlinux.org/download-links/"
+
+[linux-antix]
+display_name = "antiX Linux"
+category = "linux"
+emulator = "qemu-system-i386"
+memory_mb = 512
+cpu_cores = 1
+cpu_model = "host"
+machine = "pc"
+vga = "std"
+audio = ["intel-hda", "hda-duplex"]
+network_model = "virtio"
+disk_interface = "virtio"
+disk_size_gb = 16
+enable_kvm = true
+uefi = false
+tpm = false
+rtc_localtime = false
+usb_tablet = true
+display = "gtk"
+extra_args = []
+iso_url = "https://antixlinux.com/download/"
+notes = "Lightweight distro, runs well on minimal resources."
+
+[linux-kali]
+display_name = "Kali Linux"
+category = "linux"
+emulator = "qemu-system-x86_64"
+memory_mb = 4096
+cpu_cores = 2
+cpu_model = "host"
+machine = "q35"
+vga = "virtio"
+audio = ["intel-hda", "hda-duplex"]
+network_model = "virtio"
+disk_interface = "virtio"
+disk_size_gb = 64
+enable_kvm = true
+uefi = false
+tpm = false
+rtc_localtime = false
+usb_tablet = true
+display = "gtk"
+extra_args = []
+iso_url = "https://www.kali.org/get-kali/#kali-installer-images"
+notes = "Security testing distribution. Larger disk recommended for tools."
+
+[linux-parrot]
+display_name = "Parrot Security OS"
+category = "linux"
+emulator = "qemu-system-x86_64"
+memory_mb = 4096
+cpu_cores = 2
+cpu_model = "host"
+machine = "q35"
+vga = "virtio"
+audio = ["intel-hda", "hda-duplex"]
+network_model = "virtio"
+disk_interface = "virtio"
+disk_size_gb = 64
+enable_kvm = true
+uefi = false
+tpm = false
+rtc_localtime = false
+usb_tablet = true
+display = "gtk"
+extra_args = []
+iso_url = "https://parrotsec.org/download/"
+
+[linux-tails]
+display_name = "Tails"
+category = "linux"
+emulator = "qemu-system-x86_64"
+memory_mb = 2048
+cpu_cores = 2
+cpu_model = "host"
+machine = "q35"
+vga = "virtio"
+audio = ["intel-hda", "hda-duplex"]
+network_model = "virtio"
+disk_interface = "virtio"
+disk_size_gb = 8
+enable_kvm = true
+uefi = false
+tpm = false
+rtc_localtime = false
+usb_tablet = true
+display = "gtk"
+extra_args = []
+iso_url = "https://tails.net/install/"
+notes = "Live OS designed for privacy. Persistent storage optional."
+
+# =============================================================================
+# Linux - Red Hat-based (x86_64)
+# =============================================================================
+
+[linux-fedora]
+display_name = "Fedora Linux"
+category = "linux"
+emulator = "qemu-system-x86_64"
+memory_mb = 4096
+cpu_cores = 2
+cpu_model = "host"
+machine = "q35"
+vga = "virtio"
+audio = ["intel-hda", "hda-duplex"]
+network_model = "virtio"
+disk_interface = "virtio"
+disk_size_gb = 40
+enable_kvm = true
+uefi = false
+tpm = false
+rtc_localtime = false
+usb_tablet = true
+display = "gtk"
+extra_args = []
+iso_url = "https://fedoraproject.org/workstation/download"
+
+[linux-centos]
+display_name = "CentOS"
+category = "linux"
+emulator = "qemu-system-x86_64"
+memory_mb = 2048
+cpu_cores = 2
+cpu_model = "host"
+machine = "q35"
+vga = "virtio"
+audio = ["intel-hda", "hda-duplex"]
+network_model = "virtio"
+disk_interface = "virtio"
+disk_size_gb = 32
+enable_kvm = true
+uefi = false
+tpm = false
+rtc_localtime = false
+usb_tablet = true
+display = "gtk"
+extra_args = []
+iso_url = "https://www.centos.org/centos-stream/"
+notes = "CentOS Stream is the current upstream; consider Rocky or Alma for RHEL compatibility."
+
+[linux-rocky]
+display_name = "Rocky Linux"
+category = "linux"
+emulator = "qemu-system-x86_64"
+memory_mb = 2048
+cpu_cores = 2
+cpu_model = "host"
+machine = "q35"
+vga = "virtio"
+audio = ["intel-hda", "hda-duplex"]
+network_model = "virtio"
+disk_interface = "virtio"
+disk_size_gb = 32
+enable_kvm = true
+uefi = false
+tpm = false
+rtc_localtime = false
+usb_tablet = true
+display = "gtk"
+extra_args = []
+iso_url = "https://rockylinux.org/download"
+
+[linux-alma]
+display_name = "AlmaLinux"
+category = "linux"
+emulator = "qemu-system-x86_64"
+memory_mb = 2048
+cpu_cores = 2
+cpu_model = "host"
+machine = "q35"
+vga = "virtio"
+audio = ["intel-hda", "hda-duplex"]
+network_model = "virtio"
+disk_interface = "virtio"
+disk_size_gb = 32
+enable_kvm = true
+uefi = false
+tpm = false
+rtc_localtime = false
+usb_tablet = true
+display = "gtk"
+extra_args = []
+iso_url = "https://almalinux.org/get-almalinux/"
+
+# =============================================================================
+# Linux - SUSE (x86_64)
+# =============================================================================
+
+[linux-suse]
+display_name = "openSUSE Tumbleweed"
+category = "linux"
+emulator = "qemu-system-x86_64"
+memory_mb = 4096
+cpu_cores = 2
+cpu_model = "host"
+machine = "q35"
+vga = "virtio"
+audio = ["intel-hda", "hda-duplex"]
+network_model = "virtio"
+disk_interface = "virtio"
+disk_size_gb = 40
+enable_kvm = true
+uefi = false
+tpm = false
+rtc_localtime = false
+usb_tablet = true
+display = "gtk"
+extra_args = []
+iso_url = "https://get.opensuse.org/tumbleweed/"
+
+[linux-opensuse-leap]
+display_name = "openSUSE Leap"
+category = "linux"
+emulator = "qemu-system-x86_64"
+memory_mb = 4096
+cpu_cores = 2
+cpu_model = "host"
+machine = "q35"
+vga = "virtio"
+audio = ["intel-hda", "hda-duplex"]
+network_model = "virtio"
+disk_interface = "virtio"
+disk_size_gb = 40
+enable_kvm = true
+uefi = false
+tpm = false
+rtc_localtime = false
+usb_tablet = true
+display = "gtk"
+extra_args = []
+iso_url = "https://get.opensuse.org/leap/"
+
+# =============================================================================
+# Linux - Independent (x86_64)
+# =============================================================================
+
+[linux-gentoo]
+display_name = "Gentoo Linux"
+category = "linux"
+emulator = "qemu-system-x86_64"
+memory_mb = 4096
+cpu_cores = 4
+cpu_model = "host"
+machine = "q35"
+vga = "virtio"
+audio = ["intel-hda", "hda-duplex"]
+network_model = "virtio"
+disk_interface = "virtio"
+disk_size_gb = 64
+enable_kvm = true
+uefi = false
+tpm = false
+rtc_localtime = false
+usb_tablet = true
+display = "gtk"
+extra_args = []
+iso_url = "https://www.gentoo.org/downloads/"
+notes = "Source-based distro. More cores = faster compilation."
+
+[linux-void]
+display_name = "Void Linux"
+category = "linux"
+emulator = "qemu-system-x86_64"
+memory_mb = 2048
+cpu_cores = 2
+cpu_model = "host"
+machine = "q35"
+vga = "virtio"
+audio = ["intel-hda", "hda-duplex"]
+network_model = "virtio"
+disk_interface = "virtio"
+disk_size_gb = 32
+enable_kvm = true
+uefi = false
+tpm = false
+rtc_localtime = false
+usb_tablet = true
+display = "gtk"
+extra_args = []
+iso_url = "https://voidlinux.org/download/"
+
+[linux-nixos]
+display_name = "NixOS"
+category = "linux"
+emulator = "qemu-system-x86_64"
+memory_mb = 4096
+cpu_cores = 2
+cpu_model = "host"
+machine = "q35"
+vga = "virtio"
+audio = ["intel-hda", "hda-duplex"]
+network_model = "virtio"
+disk_interface = "virtio"
+disk_size_gb = 40
+enable_kvm = true
+uefi = false
+tpm = false
+rtc_localtime = false
+usb_tablet = true
+display = "gtk"
+extra_args = []
+iso_url = "https://nixos.org/download.html"
+
+[nix-os]
+display_name = "NixOS"
+category = "linux"
+emulator = "qemu-system-x86_64"
+memory_mb = 4096
+cpu_cores = 2
+cpu_model = "host"
+machine = "q35"
+vga = "virtio"
+audio = ["intel-hda", "hda-duplex"]
+network_model = "virtio"
+disk_interface = "virtio"
+disk_size_gb = 40
+enable_kvm = true
+uefi = false
+tpm = false
+rtc_localtime = false
+usb_tablet = true
+display = "gtk"
+extra_args = []
+iso_url = "https://nixos.org/download.html"
+
+[linux-nix-os]
+display_name = "NixOS"
+category = "linux"
+emulator = "qemu-system-x86_64"
+memory_mb = 4096
+cpu_cores = 2
+cpu_model = "host"
+machine = "q35"
+vga = "virtio"
+audio = ["intel-hda", "hda-duplex"]
+network_model = "virtio"
+disk_interface = "virtio"
+disk_size_gb = 40
+enable_kvm = true
+uefi = false
+tpm = false
+rtc_localtime = false
+usb_tablet = true
+display = "gtk"
+extra_args = []
+iso_url = "https://nixos.org/download.html"
+
+[linux-slackware]
+display_name = "Slackware Linux"
+category = "linux"
+emulator = "qemu-system-x86_64"
+memory_mb = 2048
+cpu_cores = 2
+cpu_model = "host"
+machine = "q35"
+vga = "virtio"
+audio = ["intel-hda", "hda-duplex"]
+network_model = "virtio"
+disk_interface = "virtio"
+disk_size_gb = 32
+enable_kvm = true
+uefi = false
+tpm = false
+rtc_localtime = false
+usb_tablet = true
+display = "gtk"
+extra_args = []
+iso_url = "https://www.slackware.com/getslack/"
+
+[linux-solus]
+display_name = "Solus"
+category = "linux"
+emulator = "qemu-system-x86_64"
+memory_mb = 4096
+cpu_cores = 2
+cpu_model = "host"
+machine = "q35"
+vga = "virtio"
+audio = ["intel-hda", "hda-duplex"]
+network_model = "virtio"
+disk_interface = "virtio"
+disk_size_gb = 40
+enable_kvm = true
+uefi = false
+tpm = false
+rtc_localtime = false
+usb_tablet = true
+display = "gtk"
+extra_args = []
+iso_url = "https://getsol.us/download/"
+
+[linux-alpine]
+display_name = "Alpine Linux"
+category = "linux"
+emulator = "qemu-system-x86_64"
+memory_mb = 512
+cpu_cores = 1
+cpu_model = "host"
+machine = "q35"
+vga = "std"
+audio = ["intel-hda", "hda-duplex"]
+network_model = "virtio"
+disk_interface = "virtio"
+disk_size_gb = 8
+enable_kvm = true
+uefi = false
+tpm = false
+rtc_localtime = false
+usb_tablet = true
+display = "gtk"
+extra_args = []
+iso_url = "https://alpinelinux.org/downloads/"
+notes = "Extremely lightweight. Uses musl libc instead of glibc."
+
+[linux-clear]
+display_name = "Clear Linux"
+category = "linux"
+emulator = "qemu-system-x86_64"
+memory_mb = 4096
+cpu_cores = 4
+cpu_model = "host"
+machine = "q35"
+vga = "virtio"
+audio = ["intel-hda", "hda-duplex"]
+network_model = "virtio"
+disk_interface = "virtio"
+disk_size_gb = 40
+enable_kvm = true
+uefi = true
+tpm = false
+rtc_localtime = false
+usb_tablet = true
+display = "gtk"
+extra_args = []
+iso_url = "https://clearlinux.org/downloads"
+notes = "Intel-optimized. UEFI mode recommended."
+
+[linux-mageia]
+display_name = "Mageia"
+category = "linux"
+emulator = "qemu-system-x86_64"
+memory_mb = 4096
+cpu_cores = 2
+cpu_model = "host"
+machine = "q35"
+vga = "virtio"
+audio = ["intel-hda", "hda-duplex"]
+network_model = "virtio"
+disk_interface = "virtio"
+disk_size_gb = 40
+enable_kvm = true
+uefi = false
+tpm = false
+rtc_localtime = false
+usb_tablet = true
+display = "gtk"
+extra_args = []
+iso_url = "https://www.mageia.org/en/downloads/"
+
+[linux-pclinuxos]
+display_name = "PCLinuxOS"
+category = "linux"
+emulator = "qemu-system-x86_64"
+memory_mb = 4096
+cpu_cores = 2
+cpu_model = "host"
+machine = "q35"
+vga = "virtio"
+audio = ["intel-hda", "hda-duplex"]
+network_model = "virtio"
+disk_interface = "virtio"
+disk_size_gb = 40
+enable_kvm = true
+uefi = false
+tpm = false
+rtc_localtime = false
+usb_tablet = true
+display = "gtk"
+extra_args = []
+iso_url = "https://www.pclinuxos.com/get-pclinuxos/"
+
+[linux-puppy]
+display_name = "Puppy Linux"
+category = "linux"
+emulator = "qemu-system-i386"
+memory_mb = 512
+cpu_cores = 1
+cpu_model = "host"
+machine = "pc"
+vga = "std"
+audio = ["ac97"]
+network_model = "rtl8139"
+disk_interface = "ide"
+disk_size_gb = 4
+enable_kvm = true
+uefi = false
+tpm = false
+rtc_localtime = false
+usb_tablet = true
+display = "gtk"
+extra_args = []
+iso_url = "https://puppylinux.com/"
+notes = "Runs entirely in RAM. Extremely lightweight."
+
+[linux-deepin]
+display_name = "Deepin"
+category = "linux"
+emulator = "qemu-system-x86_64"
+memory_mb = 4096
+cpu_cores = 2
+cpu_model = "host"
+machine = "q35"
+vga = "virtio"
+audio = ["intel-hda", "hda-duplex"]
+network_model = "virtio"
+disk_interface = "virtio"
+disk_size_gb = 40
+enable_kvm = true
+uefi = false
+tpm = false
+rtc_localtime = false
+usb_tablet = true
+display = "gtk"
+extra_args = []
+iso_url = "https://www.deepin.org/en/download/"
+
+# =============================================================================
+# Linux - Gaming-focused (x86_64)
+# =============================================================================
+
+[linux-bazzite]
+display_name = "Bazzite"
+category = "linux"
+emulator = "qemu-system-x86_64"
+memory_mb = 8192
+cpu_cores = 4
+cpu_model = "host"
+machine = "q35"
+vga = "virtio"
+audio = ["intel-hda", "hda-duplex"]
+network_model = "virtio"
+disk_interface = "virtio"
+disk_size_gb = 128
+enable_kvm = true
+uefi = false
+tpm = false
+rtc_localtime = false
+usb_tablet = true
+display = "gtk"
+extra_args = []
+iso_url = "https://bazzite.gg/"
+notes = "Gaming-focused immutable distro. Larger disk recommended for games."
+
+# =============================================================================
+# Linux - Historic (i386)
+# =============================================================================
+
+[linux-mandrake-8]
+display_name = "Mandrake Linux 8"
+category = "linux"
+emulator = "qemu-system-i386"
+memory_mb = 256
+cpu_cores = 1
+cpu_model = "pentium3"
+machine = "pc"
+vga = "std"
+audio = ["ac97"]
+network_model = "rtl8139"
+disk_interface = "ide"
+disk_size_gb = 8
+enable_kvm = true
+uefi = false
+tpm = false
+rtc_localtime = false
+usb_tablet = false
+display = "gtk"
+extra_args = []
+notes = "Historic distro from 2001. Requires period-appropriate settings."
+
+[linux-redhat-7]
+display_name = "Red Hat Linux 7"
+category = "linux"
+emulator = "qemu-system-i386"
+memory_mb = 256
+cpu_cores = 1
+cpu_model = "pentium3"
+machine = "pc"
+vga = "std"
+audio = ["ac97"]
+network_model = "rtl8139"
+disk_interface = "ide"
+disk_size_gb = 8
+enable_kvm = true
+uefi = false
+tpm = false
+rtc_localtime = false
+usb_tablet = false
+display = "gtk"
+extra_args = []
+notes = "Not RHEL 7 - this is the classic Red Hat Linux from 2000."
+
+[linux-suse-7]
+display_name = "SuSE Linux 7"
+category = "linux"
+emulator = "qemu-system-i386"
+memory_mb = 256
+cpu_cores = 1
+cpu_model = "pentium3"
+machine = "pc"
+vga = "std"
+audio = ["ac97"]
+network_model = "rtl8139"
+disk_interface = "ide"
+disk_size_gb = 8
+enable_kvm = true
+uefi = false
+tpm = false
+rtc_localtime = false
+usb_tablet = false
+display = "gtk"
+extra_args = []
+notes = "Historic SuSE from 2000."
+
+# =============================================================================
+# BSD Family (x86_64)
+# =============================================================================
+
+[freebsd]
+display_name = "FreeBSD"
+category = "bsd"
+emulator = "qemu-system-x86_64"
+memory_mb = 2048
+cpu_cores = 2
+cpu_model = "host"
+machine = "q35"
+vga = "virtio"
+audio = ["intel-hda", "hda-duplex"]
+network_model = "virtio"
+disk_interface = "virtio"
+disk_size_gb = 32
+enable_kvm = true
+uefi = false
+tpm = false
+rtc_localtime = false
+usb_tablet = true
+display = "gtk"
+extra_args = []
+iso_url = "https://www.freebsd.org/where/"
+
+[openbsd]
+display_name = "OpenBSD"
+category = "bsd"
+emulator = "qemu-system-x86_64"
+memory_mb = 1024
+cpu_cores = 2
+cpu_model = "host"
+machine = "q35"
+vga = "std"
+audio = ["intel-hda", "hda-duplex"]
+network_model = "virtio"
+disk_interface = "virtio"
+disk_size_gb = 16
+enable_kvm = true
+uefi = false
+tpm = false
+rtc_localtime = false
+usb_tablet = true
+display = "gtk"
+extra_args = []
+iso_url = "https://www.openbsd.org/faq/faq4.html#Download"
+notes = "Security-focused BSD. Conservative defaults."
+
+[netbsd]
+display_name = "NetBSD"
+category = "bsd"
+emulator = "qemu-system-x86_64"
+memory_mb = 1024
+cpu_cores = 2
+cpu_model = "host"
+machine = "q35"
+vga = "std"
+audio = ["intel-hda", "hda-duplex"]
+network_model = "virtio"
+disk_interface = "virtio"
+disk_size_gb = 16
+enable_kvm = true
+uefi = false
+tpm = false
+rtc_localtime = false
+usb_tablet = true
+display = "gtk"
+extra_args = []
+iso_url = "https://www.netbsd.org/releases/"
+
+[dragonflybsd]
+display_name = "DragonFly BSD"
+category = "bsd"
+emulator = "qemu-system-x86_64"
+memory_mb = 2048
+cpu_cores = 2
+cpu_model = "host"
+machine = "q35"
+vga = "std"
+audio = ["intel-hda", "hda-duplex"]
+network_model = "virtio"
+disk_interface = "virtio"
+disk_size_gb = 32
+enable_kvm = true
+uefi = false
+tpm = false
+rtc_localtime = false
+usb_tablet = true
+display = "gtk"
+extra_args = []
+iso_url = "https://www.dragonflybsd.org/download/"
+
+[ghostbsd]
+display_name = "GhostBSD"
+category = "bsd"
+emulator = "qemu-system-x86_64"
+memory_mb = 4096
+cpu_cores = 2
+cpu_model = "host"
+machine = "q35"
+vga = "virtio"
+audio = ["intel-hda", "hda-duplex"]
+network_model = "virtio"
+disk_interface = "virtio"
+disk_size_gb = 40
+enable_kvm = true
+uefi = false
+tpm = false
+rtc_localtime = false
+usb_tablet = true
+display = "gtk"
+extra_args = []
+iso_url = "https://www.ghostbsd.org/download"
+notes = "User-friendly FreeBSD desktop."
+
+# =============================================================================
+# Unix - Solaris / illumos (x86_64)
+# =============================================================================
+
+[solaris]
+display_name = "Oracle Solaris"
+category = "unix"
+emulator = "qemu-system-x86_64"
+memory_mb = 4096
+cpu_cores = 2
+cpu_model = "host"
+machine = "q35"
+vga = "std"
+audio = ["intel-hda", "hda-duplex"]
+network_model = "e1000"
+disk_interface = "ide"
+disk_size_gb = 40
+enable_kvm = true
+uefi = false
+tpm = false
+rtc_localtime = false
+usb_tablet = true
+display = "gtk"
+extra_args = []
+notes = "Commercial Solaris from Oracle. Registration may be required."
+
+[solaris-10]
+display_name = "Sun Solaris 10"
+category = "unix"
+emulator = "qemu-system-x86_64"
+memory_mb = 2048
+cpu_cores = 2
+cpu_model = "host"
+machine = "pc"
+vga = "std"
+audio = ["ac97"]
+network_model = "e1000"
+disk_interface = "ide"
+disk_size_gb = 32
+enable_kvm = true
+uefi = false
+tpm = false
+rtc_localtime = false
+usb_tablet = true
+display = "gtk"
+extra_args = []
+notes = "Landmark release with ZFS and DTrace."
+
+[openindiana]
+display_name = "OpenIndiana"
+category = "unix"
+emulator = "qemu-system-x86_64"
+memory_mb = 4096
+cpu_cores = 2
+cpu_model = "host"
+machine = "q35"
+vga = "std"
+audio = ["intel-hda", "hda-duplex"]
+network_model = "e1000"
+disk_interface = "ide"
+disk_size_gb = 40
+enable_kvm = true
+uefi = false
+tpm = false
+rtc_localtime = false
+usb_tablet = true
+display = "gtk"
+extra_args = []
+iso_url = "https://www.openindiana.org/download/"
+
+# =============================================================================
+# IBM OS/2 (i386)
+# =============================================================================
+
+[os2-warp3]
+display_name = "OS/2 Warp 3"
+category = "alternative"
+emulator = "qemu-system-i386"
+memory_mb = 64
+cpu_cores = 1
+cpu_model = "pentium"
+machine = "pc"
+vga = "std"
+audio = ["sb16"]
+network_model = "ne2k_pci"
+disk_interface = "ide"
+disk_size_gb = 2
+enable_kvm = true
+uefi = false
+tpm = false
+rtc_localtime = true
+usb_tablet = false
+display = "gtk"
+extra_args = []
+notes = "IBM's competitor to Windows 95. Limited driver support in QEMU."
+
+[os2-warp4]
+display_name = "OS/2 Warp 4"
+category = "alternative"
+emulator = "qemu-system-i386"
+memory_mb = 128
+cpu_cores = 1
+cpu_model = "pentium"
+machine = "pc"
+vga = "std"
+audio = ["sb16"]
+network_model = "ne2k_pci"
+disk_interface = "ide"
+disk_size_gb = 4
+enable_kvm = true
+uefi = false
+tpm = false
+rtc_localtime = true
+usb_tablet = false
+display = "gtk"
+extra_args = []
+
+# =============================================================================
+# Be / Haiku (x86_64/i386)
+# =============================================================================
+
+[beos]
+display_name = "BeOS"
+category = "alternative"
+emulator = "qemu-system-i386"
+memory_mb = 256
+cpu_cores = 1
+cpu_model = "pentium3"
+machine = "pc"
+vga = "std"
+audio = ["ac97"]
+network_model = "rtl8139"
+disk_interface = "ide"
+disk_size_gb = 4
+enable_kvm = true
+uefi = false
+tpm = false
+rtc_localtime = false
+usb_tablet = false
+display = "gtk"
+extra_args = []
+notes = "BeOS requires specific QEMU settings. VESA graphics mode recommended."
+
+[haiku]
+display_name = "Haiku"
+category = "alternative"
+emulator = "qemu-system-x86_64"
+memory_mb = 2048
+cpu_cores = 2
+cpu_model = "host"
+machine = "q35"
+vga = "std"
+audio = ["intel-hda", "hda-duplex"]
+network_model = "virtio"
+disk_interface = "virtio"
+disk_size_gb = 16
+enable_kvm = true
+uefi = false
+tpm = false
+rtc_localtime = false
+usb_tablet = true
+display = "gtk"
+extra_args = []
+iso_url = "https://www.haiku-os.org/get-haiku/"
+
+# =============================================================================
+# NeXT (m68k/i386)
+# =============================================================================
+
+[nextstep]
+display_name = "NeXTSTEP"
+category = "alternative"
+emulator = "qemu-system-m68k"
+memory_mb = 128
+cpu_cores = 1
+cpu_model = "m68040"
+machine = "next-cube"
+vga = "none"
+audio = []
+network_model = "none"
+disk_interface = "scsi"
+disk_size_gb = 2
+enable_kvm = false
+uefi = false
+tpm = false
+rtc_localtime = false
+usb_tablet = false
+display = "gtk"
+extra_args = []
+notes = "Requires qemu-system-m68k with NeXT support. Complex setup."
+
+[openstep]
+display_name = "OpenStep"
+category = "alternative"
+emulator = "qemu-system-i386"
+memory_mb = 128
+cpu_cores = 1
+cpu_model = "pentium"
+machine = "pc"
+vga = "std"
+audio = ["sb16"]
+network_model = "ne2k_pci"
+disk_interface = "ide"
+disk_size_gb = 2
+enable_kvm = true
+uefi = false
+tpm = false
+rtc_localtime = false
+usb_tablet = false
+display = "gtk"
+extra_args = []
+notes = "OpenStep for x86 is easier to run than NeXTSTEP."
+
+# =============================================================================
+# Research Operating Systems (i386/x86_64)
+# =============================================================================
+
+[plan9]
+display_name = "Plan 9"
+category = "alternative"
+emulator = "qemu-system-i386"
+memory_mb = 256
+cpu_cores = 1
+cpu_model = "pentium3"
+machine = "pc"
+vga = "std"
+audio = ["sb16"]
+network_model = "rtl8139"
+disk_interface = "ide"
+disk_size_gb = 4
+enable_kvm = true
+uefi = false
+tpm = false
+rtc_localtime = false
+usb_tablet = false
+display = "gtk"
+extra_args = []
+iso_url = "https://9p.io/plan9/"
+notes = "Bell Labs distributed OS. Everything is a file."
+
+[inferno]
+display_name = "Inferno"
+category = "alternative"
+emulator = "qemu-system-x86_64"
+memory_mb = 512
+cpu_cores = 1
+cpu_model = "host"
+machine = "pc"
+vga = "std"
+audio = []
+network_model = "virtio"
+disk_interface = "virtio"
+disk_size_gb = 4
+enable_kvm = true
+uefi = false
+tpm = false
+rtc_localtime = false
+usb_tablet = true
+display = "gtk"
+extra_args = []
+iso_url = "https://bitbucket.org/inferno-os/inferno-os/downloads/"
+
+# =============================================================================
+# Alternative Operating Systems (i386/x86_64)
+# =============================================================================
+
+[reactos]
+display_name = "ReactOS"
+category = "alternative"
+emulator = "qemu-system-i386"
+memory_mb = 512
+cpu_cores = 1
+cpu_model = "pentium3"
+machine = "pc"
+vga = "std"
+audio = ["ac97"]
+network_model = "rtl8139"
+disk_interface = "ide"
+disk_size_gb = 8
+enable_kvm = true
+uefi = false
+tpm = false
+rtc_localtime = true
+usb_tablet = true
+display = "gtk"
+extra_args = []
+iso_url = "https://reactos.org/download/"
+notes = "Windows-compatible open source OS. Still in alpha."
+
+[serenityos]
+display_name = "SerenityOS"
+category = "alternative"
+emulator = "qemu-system-x86_64"
+memory_mb = 2048
+cpu_cores = 2
+cpu_model = "host"
+machine = "q35"
+vga = "std"
+audio = ["intel-hda", "hda-duplex"]
+network_model = "e1000"
+disk_interface = "ide"
+disk_size_gb = 16
+enable_kvm = true
+uefi = false
+tpm = false
+rtc_localtime = false
+usb_tablet = true
+display = "gtk"
+extra_args = []
+iso_url = "https://serenityos.org/"
+notes = "Retro 90s-style OS built from scratch. May need to build from source."
+
+[redoxos]
+display_name = "Redox OS"
+category = "alternative"
+emulator = "qemu-system-x86_64"
+memory_mb = 2048
+cpu_cores = 2
+cpu_model = "host"
+machine = "q35"
+vga = "std"
+audio = ["intel-hda", "hda-duplex"]
+network_model = "e1000"
+disk_interface = "ide"
+disk_size_gb = 8
+enable_kvm = true
+uefi = false
+tpm = false
+rtc_localtime = false
+usb_tablet = true
+display = "gtk"
+extra_args = []
+iso_url = "https://www.redox-os.org/docs/getting-started/"
+notes = "Rust-based microkernel OS."
+
+[templeos]
+display_name = "TempleOS"
+category = "alternative"
+emulator = "qemu-system-x86_64"
+memory_mb = 512
+cpu_cores = 1
+cpu_model = "host"
+machine = "pc"
+vga = "std"
+audio = ["ac97"]
+network_model = "none"
+disk_interface = "ide"
+disk_size_gb = 2
+enable_kvm = true
+uefi = false
+tpm = false
+rtc_localtime = false
+usb_tablet = false
+display = "gtk"
+extra_args = []
+iso_url = "https://templeos.org/"
+notes = "Single-developer OS with unique features. No networking."
+
+[kolibrios]
+display_name = "KolibriOS"
+category = "alternative"
+emulator = "qemu-system-i386"
+memory_mb = 128
+cpu_cores = 1
+cpu_model = "pentium3"
+machine = "pc"
+vga = "std"
+audio = ["ac97"]
+network_model = "rtl8139"
+disk_interface = "ide"
+disk_size_gb = 1
+enable_kvm = true
+uefi = false
+tpm = false
+rtc_localtime = false
+usb_tablet = false
+display = "gtk"
+extra_args = []
+iso_url = "https://kolibrios.org/en/download"
+notes = "Tiny assembly-language OS. Fits on a floppy disk."
+
+# =============================================================================
+# Retro DOS-compatible (i386)
+# =============================================================================
+
+[freedos]
+display_name = "FreeDOS"
+category = "retro"
+emulator = "qemu-system-i386"
+memory_mb = 64
+cpu_cores = 1
+cpu_model = "486"
+machine = "pc"
+vga = "std"
+audio = ["sb16"]
+network_model = "ne2k_pci"
+disk_interface = "ide"
+disk_size_gb = 1
+enable_kvm = true
+uefi = false
+tpm = false
+rtc_localtime = true
+usb_tablet = false
+display = "gtk"
+extra_args = []
+iso_url = "https://www.freedos.org/download/"
+notes = "Free DOS-compatible OS. Great for running DOS games and apps."
+
+[drdos]
+display_name = "DR-DOS"
+category = "retro"
+emulator = "qemu-system-i386"
+memory_mb = 64
+cpu_cores = 1
+cpu_model = "486"
+machine = "pc"
+vga = "std"
+audio = ["sb16"]
+network_model = "ne2k_pci"
+disk_interface = "ide"
+disk_size_gb = 1
+enable_kvm = true
+uefi = false
+tpm = false
+rtc_localtime = true
+usb_tablet = false
+display = "gtk"
+extra_args = []
+notes = "Digital Research DOS. Historic competitor to MS-DOS."
+
+[cpm]
+display_name = "CP/M"
+category = "retro"
+emulator = "qemu-system-i386"
+memory_mb = 16
+cpu_cores = 1
+cpu_model = "486"
+machine = "pc"
+vga = "std"
+audio = []
+network_model = "none"
+disk_interface = "ide"
+disk_size_gb = 1
+enable_kvm = true
+uefi = false
+tpm = false
+rtc_localtime = false
+usb_tablet = false
+display = "gtk"
+extra_args = []
+notes = "Requires CP/M emulator or special setup. Original was for 8080/Z80."
+
+# =============================================================================
+# Classic Macintosh (m68k/ppc) - Limited QEMU support
+# =============================================================================
+
+[mac-system6]
+display_name = "Macintosh System 6"
+category = "classic-mac"
+emulator = "qemu-system-m68k"
+memory_mb = 8
+cpu_cores = 1
+cpu_model = "m68040"
+machine = "q800"
+vga = "none"
+audio = []
+network_model = "none"
+disk_interface = "scsi"
+disk_size_gb = 1
+enable_kvm = false
+uefi = false
+tpm = false
+rtc_localtime = false
+usb_tablet = false
+display = "gtk"
+extra_args = []
+notes = "Requires qemu-system-m68k. Consider using a dedicated emulator like Basilisk II."
+
+[mac-system7]
+display_name = "Macintosh System 7"
+category = "classic-mac"
+emulator = "qemu-system-m68k"
+memory_mb = 32
+cpu_cores = 1
+cpu_model = "m68040"
+machine = "q800"
+vga = "none"
+audio = []
+network_model = "none"
+disk_interface = "scsi"
+disk_size_gb = 1
+enable_kvm = false
+uefi = false
+tpm = false
+rtc_localtime = false
+usb_tablet = false
+display = "gtk"
+extra_args = []
+notes = "Requires qemu-system-m68k. Consider using Basilisk II for better compatibility."
+
+[mac-os8]
+display_name = "Mac OS 8"
+category = "classic-mac"
+emulator = "qemu-system-ppc"
+memory_mb = 128
+cpu_cores = 1
+cpu_model = "g3"
+machine = "mac99"
+vga = "none"
+audio = []
+network_model = "none"
+disk_interface = "ide"
+disk_size_gb = 2
+enable_kvm = false
+uefi = false
+tpm = false
+rtc_localtime = false
+usb_tablet = false
+display = "gtk"
+extra_args = []
+notes = "PowerPC Mac OS. QEMU support is limited. Consider SheepShaver."
+
+[mac-os9]
+display_name = "Mac OS 9"
+category = "classic-mac"
+emulator = "qemu-system-ppc"
+memory_mb = 256
+cpu_cores = 1
+cpu_model = "g3"
+machine = "mac99"
+vga = "none"
+audio = []
+network_model = "none"
+disk_interface = "ide"
+disk_size_gb = 4
+enable_kvm = false
+uefi = false
+tpm = false
+rtc_localtime = false
+usb_tablet = false
+display = "gtk"
+extra_args = []
+notes = "Last 'Classic' Mac OS. QEMU support limited. Use SheepShaver for better results."
+
+# =============================================================================
+# Mac OS X - PowerPC (ppc)
+# =============================================================================
+
+[mac-osx-panther]
+display_name = "Mac OS X Panther"
+category = "classic-mac"
+emulator = "qemu-system-ppc"
+memory_mb = 512
+cpu_cores = 1
+cpu_model = "g4"
+machine = "mac99"
+vga = "none"
+audio = []
+network_model = "none"
+disk_interface = "ide"
+disk_size_gb = 8
+enable_kvm = false
+uefi = false
+tpm = false
+rtc_localtime = false
+usb_tablet = false
+display = "gtk"
+extra_args = []
+notes = "PowerPC Mac OS X. QEMU support very limited."
+
+[mac-osx-jaguar]
+display_name = "Mac OS X Jaguar"
+category = "classic-mac"
+emulator = "qemu-system-ppc"
+memory_mb = 512
+cpu_cores = 1
+cpu_model = "g4"
+machine = "mac99"
+vga = "none"
+audio = []
+network_model = "none"
+disk_interface = "ide"
+disk_size_gb = 8
+enable_kvm = false
+uefi = false
+tpm = false
+rtc_localtime = false
+usb_tablet = false
+display = "gtk"
+extra_args = []
+notes = "PowerPC Mac OS X. QEMU support very limited."
+
+[mac-osx-tiger]
+display_name = "Mac OS X Tiger"
+category = "classic-mac"
+emulator = "qemu-system-ppc"
+memory_mb = 512
+cpu_cores = 1
+cpu_model = "g4"
+machine = "mac99"
+vga = "none"
+audio = []
+network_model = "none"
+disk_interface = "ide"
+disk_size_gb = 10
+enable_kvm = false
+uefi = false
+tpm = false
+rtc_localtime = false
+usb_tablet = false
+display = "gtk"
+extra_args = []
+notes = "PowerPC Mac OS X. QEMU support very limited. Last PPC release."
+
+# =============================================================================
+# Mac OS X / macOS - Intel (x86_64)
+# Note: Running macOS in QEMU may violate Apple's EULA unless on Apple hardware
+# =============================================================================
+
+[mac-osx-leopard]
+display_name = "Mac OS X Leopard"
+category = "macos"
+emulator = "qemu-system-x86_64"
+memory_mb = 2048
+cpu_cores = 2
+cpu_model = "Penryn"
+machine = "q35"
+vga = "vmware"
+audio = ["intel-hda", "hda-duplex"]
+network_model = "e1000"
+disk_interface = "ide"
+disk_size_gb = 32
+enable_kvm = true
+uefi = false
+tpm = false
+rtc_localtime = false
+usb_tablet = true
+display = "gtk"
+extra_args = []
+notes = "macOS virtualization may require Apple hardware per EULA."
+
+[mac-osx-snow-leopard]
+display_name = "Mac OS X Snow Leopard"
+category = "macos"
+emulator = "qemu-system-x86_64"
+memory_mb = 2048
+cpu_cores = 2
+cpu_model = "Penryn"
+machine = "q35"
+vga = "vmware"
+audio = ["intel-hda", "hda-duplex"]
+network_model = "e1000"
+disk_interface = "ide"
+disk_size_gb = 32
+enable_kvm = true
+uefi = false
+tpm = false
+rtc_localtime = false
+usb_tablet = true
+display = "gtk"
+extra_args = []
+notes = "macOS virtualization may require Apple hardware per EULA."
+
+[mac-osx-lion]
+display_name = "Mac OS X Lion"
+category = "macos"
+emulator = "qemu-system-x86_64"
+memory_mb = 4096
+cpu_cores = 2
+cpu_model = "Penryn"
+machine = "q35"
+vga = "vmware"
+audio = ["intel-hda", "hda-duplex"]
+network_model = "e1000"
+disk_interface = "ide"
+disk_size_gb = 40
+enable_kvm = true
+uefi = false
+tpm = false
+rtc_localtime = false
+usb_tablet = true
+display = "gtk"
+extra_args = []
+
+[mac-osx-mountain-lion]
+display_name = "OS X Mountain Lion"
+category = "macos"
+emulator = "qemu-system-x86_64"
+memory_mb = 4096
+cpu_cores = 2
+cpu_model = "Penryn"
+machine = "q35"
+vga = "vmware"
+audio = ["intel-hda", "hda-duplex"]
+network_model = "e1000"
+disk_interface = "ide"
+disk_size_gb = 40
+enable_kvm = true
+uefi = false
+tpm = false
+rtc_localtime = false
+usb_tablet = true
+display = "gtk"
+extra_args = []
+
+[macos-sierra]
+display_name = "macOS Sierra"
+category = "macos"
+emulator = "qemu-system-x86_64"
+memory_mb = 4096
+cpu_cores = 2
+cpu_model = "Penryn"
+machine = "q35"
+vga = "vmware"
+audio = ["intel-hda", "hda-duplex"]
+network_model = "e1000"
+disk_interface = "sata"
+disk_size_gb = 64
+enable_kvm = true
+uefi = false
+tpm = false
+rtc_localtime = false
+usb_tablet = true
+display = "gtk"
+extra_args = []
+
+[macos-high-sierra]
+display_name = "macOS High Sierra"
+category = "macos"
+emulator = "qemu-system-x86_64"
+memory_mb = 4096
+cpu_cores = 2
+cpu_model = "Penryn"
+machine = "q35"
+vga = "vmware"
+audio = ["intel-hda", "hda-duplex"]
+network_model = "e1000"
+disk_interface = "sata"
+disk_size_gb = 64
+enable_kvm = true
+uefi = false
+tpm = false
+rtc_localtime = false
+usb_tablet = true
+display = "gtk"
+extra_args = []
+
+[macos-mojave]
+display_name = "macOS Mojave"
+category = "macos"
+emulator = "qemu-system-x86_64"
+memory_mb = 4096
+cpu_cores = 2
+cpu_model = "Penryn"
+machine = "q35"
+vga = "vmware"
+audio = ["intel-hda", "hda-duplex"]
+network_model = "e1000"
+disk_interface = "sata"
+disk_size_gb = 64
+enable_kvm = true
+uefi = false
+tpm = false
+rtc_localtime = false
+usb_tablet = true
+display = "gtk"
+extra_args = []
+
+[macos-catalina]
+display_name = "macOS Catalina"
+category = "macos"
+emulator = "qemu-system-x86_64"
+memory_mb = 4096
+cpu_cores = 2
+cpu_model = "Penryn"
+machine = "q35"
+vga = "vmware"
+audio = ["intel-hda", "hda-duplex"]
+network_model = "e1000"
+disk_interface = "sata"
+disk_size_gb = 64
+enable_kvm = true
+uefi = true
+tpm = false
+rtc_localtime = false
+usb_tablet = true
+display = "gtk"
+extra_args = []
+
+[macos-big-sur]
+display_name = "macOS Big Sur"
+category = "macos"
+emulator = "qemu-system-x86_64"
+memory_mb = 8192
+cpu_cores = 4
+cpu_model = "Penryn"
+machine = "q35"
+vga = "vmware"
+audio = ["intel-hda", "hda-duplex"]
+network_model = "e1000"
+disk_interface = "sata"
+disk_size_gb = 80
+enable_kvm = true
+uefi = true
+tpm = false
+rtc_localtime = false
+usb_tablet = true
+display = "gtk"
+extra_args = []
+
+[macos-monterey]
+display_name = "macOS Monterey"
+category = "macos"
+emulator = "qemu-system-x86_64"
+memory_mb = 8192
+cpu_cores = 4
+cpu_model = "Penryn"
+machine = "q35"
+vga = "vmware"
+audio = ["intel-hda", "hda-duplex"]
+network_model = "e1000"
+disk_interface = "sata"
+disk_size_gb = 80
+enable_kvm = true
+uefi = true
+tpm = false
+rtc_localtime = false
+usb_tablet = true
+display = "gtk"
+extra_args = []
+
+[macos-ventura]
+display_name = "macOS Ventura"
+category = "macos"
+emulator = "qemu-system-x86_64"
+memory_mb = 8192
+cpu_cores = 4
+cpu_model = "Penryn"
+machine = "q35"
+vga = "vmware"
+audio = ["intel-hda", "hda-duplex"]
+network_model = "e1000"
+disk_interface = "sata"
+disk_size_gb = 80
+enable_kvm = true
+uefi = true
+tpm = false
+rtc_localtime = false
+usb_tablet = true
+display = "gtk"
+extra_args = []
+
+[macos-sonoma]
+display_name = "macOS Sonoma"
+category = "macos"
+emulator = "qemu-system-x86_64"
+memory_mb = 8192
+cpu_cores = 4
+cpu_model = "Penryn"
+machine = "q35"
+vga = "vmware"
+audio = ["intel-hda", "hda-duplex"]
+network_model = "e1000"
+disk_interface = "sata"
+disk_size_gb = 80
+enable_kvm = true
+uefi = true
+tpm = false
+rtc_localtime = false
+usb_tablet = true
+display = "gtk"
+extra_args = []
+
+# =============================================================================
+# Amiga / AROS (m68k/x86_64)
+# =============================================================================
+
+[amigaos]
+display_name = "AmigaOS"
+category = "retro"
+emulator = "qemu-system-m68k"
+memory_mb = 16
+cpu_cores = 1
+cpu_model = "m68040"
+machine = "none"
+vga = "none"
+audio = []
+network_model = "none"
+disk_interface = "ide"
+disk_size_gb = 1
+enable_kvm = false
+uefi = false
+tpm = false
+rtc_localtime = false
+usb_tablet = false
+display = "gtk"
+extra_args = []
+notes = "QEMU m68k support is limited. Use a dedicated emulator like FS-UAE."
+
+[aros]
+display_name = "AROS"
+category = "alternative"
+emulator = "qemu-system-x86_64"
+memory_mb = 512
+cpu_cores = 1
+cpu_model = "host"
+machine = "pc"
+vga = "std"
+audio = ["ac97"]
+network_model = "rtl8139"
+disk_interface = "ide"
+disk_size_gb = 4
+enable_kvm = true
+uefi = false
+tpm = false
+rtc_localtime = false
+usb_tablet = true
+display = "gtk"
+extra_args = []
+iso_url = "https://aros.sourceforge.io/download.php"
+notes = "Open-source AmigaOS-compatible OS for x86."
+
+[morphos]
+display_name = "MorphOS"
+category = "alternative"
+emulator = "qemu-system-ppc"
+memory_mb = 512
+cpu_cores = 1
+cpu_model = "g4"
+machine = "mac99"
+vga = "none"
+audio = []
+network_model = "none"
+disk_interface = "ide"
+disk_size_gb = 4
+enable_kvm = false
+uefi = false
+tpm = false
+rtc_localtime = false
+usb_tablet = false
+display = "gtk"
+extra_args = []
+notes = "PowerPC-only OS. Very limited QEMU support."
+
+# =============================================================================
+# Atari / Retro (m68k/i386)
+# =============================================================================
+
+[atari-tos]
+display_name = "Atari TOS"
+category = "retro"
+emulator = "qemu-system-m68k"
+memory_mb = 4
+cpu_cores = 1
+cpu_model = "m68000"
+machine = "none"
+vga = "none"
+audio = []
+network_model = "none"
+disk_interface = "ide"
+disk_size_gb = 1
+enable_kvm = false
+uefi = false
+tpm = false
+rtc_localtime = false
+usb_tablet = false
+display = "gtk"
+extra_args = []
+notes = "QEMU doesn't have Atari ST support. Use Hatari emulator instead."
+
+[geos]
+display_name = "GEOS"
+category = "retro"
+emulator = "qemu-system-i386"
+memory_mb = 16
+cpu_cores = 1
+cpu_model = "486"
+machine = "pc"
+vga = "std"
+audio = []
+network_model = "none"
+disk_interface = "ide"
+disk_size_gb = 1
+enable_kvm = true
+uefi = false
+tpm = false
+rtc_localtime = false
+usb_tablet = false
+display = "gtk"
+extra_args = []
+notes = "GEOS for PC. Original C64 version requires VICE emulator."
+
+[riscos]
+display_name = "RISC OS"
+category = "alternative"
+emulator = "qemu-system-arm"
+memory_mb = 512
+cpu_cores = 1
+cpu_model = "cortex-a7"
+machine = "raspi2b"
+vga = "none"
+audio = []
+network_model = "none"
+disk_interface = "sd"
+disk_size_gb = 4
+enable_kvm = false
+uefi = false
+tpm = false
+rtc_localtime = false
+usb_tablet = false
+display = "gtk"
+extra_args = []
+iso_url = "https://www.riscosopen.org/content/downloads"
+notes = "ARM-based OS. Better run on actual Raspberry Pi hardware."
+
+# =============================================================================
+# Default / Generic Profiles
+# =============================================================================
+
+[generic-linux]
+display_name = "Generic Linux"
+category = "linux"
+emulator = "qemu-system-x86_64"
+memory_mb = 2048
+cpu_cores = 2
+cpu_model = "host"
+machine = "q35"
+vga = "virtio"
+audio = ["intel-hda", "hda-duplex"]
+network_model = "virtio"
+disk_interface = "virtio"
+disk_size_gb = 32
+enable_kvm = true
+uefi = false
+tpm = false
+rtc_localtime = false
+usb_tablet = true
+display = "gtk"
+extra_args = []
+notes = "Generic profile for modern Linux distributions."
+
+[generic-windows]
+display_name = "Generic Windows"
+category = "windows"
+emulator = "qemu-system-x86_64"
+memory_mb = 4096
+cpu_cores = 2
+cpu_model = "host"
+machine = "q35"
+vga = "qxl"
+audio = ["intel-hda", "hda-duplex"]
+network_model = "e1000"
+disk_interface = "ide"
+disk_size_gb = 64
+enable_kvm = true
+uefi = false
+tpm = false
+rtc_localtime = true
+usb_tablet = true
+display = "gtk"
+extra_args = []
+notes = "Generic profile for Windows operating systems."
+
+[generic-bsd]
+display_name = "Generic BSD"
+category = "bsd"
+emulator = "qemu-system-x86_64"
+memory_mb = 2048
+cpu_cores = 2
+cpu_model = "host"
+machine = "q35"
+vga = "std"
+audio = ["intel-hda", "hda-duplex"]
+network_model = "virtio"
+disk_interface = "virtio"
+disk_size_gb = 32
+enable_kvm = true
+uefi = false
+tpm = false
+rtc_localtime = false
+usb_tablet = true
+display = "gtk"
+extra_args = []
+notes = "Generic profile for BSD operating systems."
+
+[generic-other]
+display_name = "Generic OS"
+category = "alternative"
+emulator = "qemu-system-x86_64"
+memory_mb = 2048
+cpu_cores = 2
+cpu_model = "host"
+machine = "q35"
+vga = "std"
+audio = ["intel-hda", "hda-duplex"]
+network_model = "e1000"
+disk_interface = "ide"
+disk_size_gb = 32
+enable_kvm = true
+uefi = false
+tpm = false
+rtc_localtime = false
+usb_tablet = true
+display = "gtk"
+extra_args = []
+notes = "Generic fallback profile for unknown operating systems."

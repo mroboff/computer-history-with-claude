@@ -5,7 +5,7 @@ use std::time::Instant;
 
 use crate::config::Config;
 use crate::hardware::UsbDevice;
-use crate::metadata::{AsciiArtStore, HierarchyConfig, MetadataStore, OsInfo};
+use crate::metadata::{AsciiArtStore, HierarchyConfig, MetadataStore, OsInfo, QemuProfileStore};
 use crate::ui::widgets::build_visual_order;
 use crate::vm::{
     discover_vms, group_vms_by_category, BootMode, DiscoveredVm, LaunchOptions, Snapshot,
@@ -42,6 +42,12 @@ pub enum Screen {
     TextInput(TextInputContext),
     /// Error dialog (scrollable)
     ErrorDialog,
+    /// VM Creation wizard (step tracked in wizard_state)
+    CreateWizard,
+    /// Custom OS metadata entry (secondary form during wizard)
+    CreateWizardCustomOs,
+    /// ISO download progress screen
+    CreateWizardDownload,
 }
 
 /// Context for text input dialogs
@@ -66,6 +72,350 @@ pub enum ConfirmAction {
 pub enum InputMode {
     Normal,
     Editing,
+}
+
+/// Steps in the VM creation wizard
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub enum WizardStep {
+    /// Step 1: Select name and OS type
+    #[default]
+    SelectOs,
+    /// Step 2: Select ISO file
+    SelectIso,
+    /// Step 3: Configure disk settings
+    ConfigureDisk,
+    /// Step 4: Configure QEMU settings
+    ConfigureQemu,
+    /// Step 5: Review and confirm
+    Confirm,
+}
+
+impl WizardStep {
+    /// Get the step number (1-5)
+    pub fn number(&self) -> u8 {
+        match self {
+            WizardStep::SelectOs => 1,
+            WizardStep::SelectIso => 2,
+            WizardStep::ConfigureDisk => 3,
+            WizardStep::ConfigureQemu => 4,
+            WizardStep::Confirm => 5,
+        }
+    }
+
+    /// Get the step title
+    pub fn title(&self) -> &'static str {
+        match self {
+            WizardStep::SelectOs => "Select Operating System",
+            WizardStep::SelectIso => "Select Installation ISO",
+            WizardStep::ConfigureDisk => "Configure Disk",
+            WizardStep::ConfigureQemu => "Configure QEMU",
+            WizardStep::Confirm => "Review & Create",
+        }
+    }
+
+    /// Move to the next step
+    pub fn next(&self) -> Option<WizardStep> {
+        match self {
+            WizardStep::SelectOs => Some(WizardStep::SelectIso),
+            WizardStep::SelectIso => Some(WizardStep::ConfigureDisk),
+            WizardStep::ConfigureDisk => Some(WizardStep::ConfigureQemu),
+            WizardStep::ConfigureQemu => Some(WizardStep::Confirm),
+            WizardStep::Confirm => None,
+        }
+    }
+
+    /// Move to the previous step
+    pub fn prev(&self) -> Option<WizardStep> {
+        match self {
+            WizardStep::SelectOs => None,
+            WizardStep::SelectIso => Some(WizardStep::SelectOs),
+            WizardStep::ConfigureDisk => Some(WizardStep::SelectIso),
+            WizardStep::ConfigureQemu => Some(WizardStep::ConfigureDisk),
+            WizardStep::Confirm => Some(WizardStep::ConfigureQemu),
+        }
+    }
+}
+
+/// QEMU configuration settings for the wizard
+#[derive(Debug, Clone)]
+pub struct WizardQemuConfig {
+    /// QEMU emulator command
+    pub emulator: String,
+    /// RAM in megabytes
+    pub memory_mb: u32,
+    /// CPU cores
+    pub cpu_cores: u32,
+    /// CPU model (host, qemu64, pentium, etc.)
+    pub cpu_model: Option<String>,
+    /// Machine type (q35, pc, etc.)
+    pub machine: Option<String>,
+    /// Graphics adapter
+    pub vga: String,
+    /// Audio devices
+    pub audio: Vec<String>,
+    /// Network adapter model
+    pub network_model: String,
+    /// Disk interface
+    pub disk_interface: String,
+    /// Enable KVM acceleration
+    pub enable_kvm: bool,
+    /// UEFI boot mode
+    pub uefi: bool,
+    /// TPM emulation
+    pub tpm: bool,
+    /// RTC uses local time (for Windows)
+    pub rtc_localtime: bool,
+    /// USB tablet for mouse
+    pub usb_tablet: bool,
+    /// Display output
+    pub display: String,
+    /// Additional QEMU arguments
+    pub extra_args: Vec<String>,
+}
+
+impl Default for WizardQemuConfig {
+    fn default() -> Self {
+        Self {
+            emulator: "qemu-system-x86_64".to_string(),
+            memory_mb: 2048,
+            cpu_cores: 2,
+            cpu_model: Some("host".to_string()),
+            machine: Some("q35".to_string()),
+            vga: "std".to_string(),
+            audio: vec!["intel-hda".to_string(), "hda-duplex".to_string()],
+            network_model: "e1000".to_string(),
+            disk_interface: "ide".to_string(),
+            enable_kvm: true,
+            uefi: false,
+            tpm: false,
+            rtc_localtime: false,
+            usb_tablet: true,
+            display: "gtk".to_string(),
+            extra_args: Vec::new(),
+        }
+    }
+}
+
+impl WizardQemuConfig {
+    /// Create from a QEMU profile
+    pub fn from_profile(profile: &crate::metadata::QemuProfile) -> Self {
+        Self {
+            emulator: profile.emulator.clone(),
+            memory_mb: profile.memory_mb,
+            cpu_cores: profile.cpu_cores,
+            cpu_model: profile.cpu_model.clone(),
+            machine: profile.machine.clone(),
+            vga: profile.vga.clone(),
+            audio: profile.audio.clone(),
+            network_model: profile.network_model.clone(),
+            disk_interface: profile.disk_interface.clone(),
+            enable_kvm: profile.enable_kvm,
+            uefi: profile.uefi,
+            tpm: profile.tpm,
+            rtc_localtime: profile.rtc_localtime,
+            usb_tablet: profile.usb_tablet,
+            display: profile.display.clone(),
+            extra_args: profile.extra_args.clone(),
+        }
+    }
+}
+
+/// Custom OS entry for when user selects "Other"
+#[derive(Debug, Clone, Default)]
+pub struct CustomOsEntry {
+    /// OS identifier (e.g., "my-custom-os")
+    pub id: String,
+    /// Display name
+    pub name: String,
+    /// Publisher/developer
+    pub publisher: String,
+    /// Release date (YYYY-MM-DD)
+    pub release_date: Option<String>,
+    /// Architecture (x86_64, i386, etc.)
+    pub architecture: String,
+    /// Short description (one line)
+    pub short_blurb: String,
+    /// Long description (multi-paragraph)
+    pub long_blurb: String,
+    /// Fun facts
+    pub fun_facts: Vec<String>,
+    /// Base profile to use for QEMU defaults
+    pub base_profile: String,
+    /// Save to user metadata for future use
+    pub save_to_user: bool,
+}
+
+/// State for the VM creation wizard
+#[derive(Debug, Clone)]
+pub struct CreateWizardState {
+    /// Current wizard step
+    pub step: WizardStep,
+    /// VM display name (user-entered)
+    pub vm_name: String,
+    /// Folder name (auto-generated from vm_name)
+    pub folder_name: String,
+    /// Selected OS profile ID (from qemu_profiles)
+    pub selected_os: Option<String>,
+    /// Custom OS entry (if "Other" selected)
+    pub custom_os: Option<CustomOsEntry>,
+    /// ISO file path
+    pub iso_path: Option<PathBuf>,
+    /// Whether an ISO download is in progress
+    pub iso_downloading: bool,
+    /// ISO download progress (0.0 - 1.0)
+    pub iso_download_progress: f32,
+    /// Disk size in gigabytes
+    pub disk_size_gb: u32,
+    /// QEMU configuration
+    pub qemu_config: WizardQemuConfig,
+    /// Auto-launch VM after creation
+    pub auto_launch: bool,
+    /// Currently focused field index (for navigation)
+    pub field_focus: usize,
+    /// OS list scroll position
+    pub os_list_scroll: usize,
+    /// OS filter/search string
+    pub os_filter: String,
+    /// Selected OS category index (for collapsible sections)
+    pub selected_category: usize,
+    /// Expanded categories (by name)
+    pub expanded_categories: Vec<String>,
+    /// Selected item within OS list (category header or OS)
+    pub os_list_selected: usize,
+    /// Error message to display
+    pub error_message: Option<String>,
+    /// Currently editing field (for text input focus)
+    pub editing_field: Option<WizardField>,
+}
+
+/// Fields that can be edited in the wizard
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum WizardField {
+    VmName,
+    OsFilter,
+    DiskSize,
+    MemoryMb,
+    CpuCores,
+    CustomOsId,
+    CustomOsName,
+    CustomOsPublisher,
+    CustomOsReleaseDate,
+    CustomOsShortBlurb,
+}
+
+impl Default for CreateWizardState {
+    fn default() -> Self {
+        Self {
+            step: WizardStep::SelectOs,
+            vm_name: String::new(),
+            folder_name: String::new(),
+            selected_os: None,
+            custom_os: None,
+            iso_path: None,
+            iso_downloading: false,
+            iso_download_progress: 0.0,
+            disk_size_gb: 32,
+            qemu_config: WizardQemuConfig::default(),
+            auto_launch: true,
+            field_focus: 0,
+            os_list_scroll: 0,
+            os_filter: String::new(),
+            selected_category: 0,
+            expanded_categories: vec![
+                "windows".to_string(),
+                "linux".to_string(),
+            ],
+            os_list_selected: 0,
+            error_message: None,
+            editing_field: None,
+        }
+    }
+}
+
+impl CreateWizardState {
+    /// Generate folder name from VM display name
+    pub fn generate_folder_name(display_name: &str) -> String {
+        display_name
+            .to_lowercase()
+            .chars()
+            .map(|c| {
+                if c.is_alphanumeric() {
+                    c
+                } else if c.is_whitespace() || c == '_' {
+                    '-'
+                } else {
+                    '-'
+                }
+            })
+            .collect::<String>()
+            .split('-')
+            .filter(|s| !s.is_empty())
+            .collect::<Vec<_>>()
+            .join("-")
+    }
+
+    /// Update folder name when VM name changes
+    pub fn update_folder_name(&mut self) {
+        self.folder_name = Self::generate_folder_name(&self.vm_name);
+    }
+
+    /// Apply profile settings to the wizard state
+    pub fn apply_profile(&mut self, profile: &crate::metadata::QemuProfile) {
+        self.disk_size_gb = profile.disk_size_gb;
+        self.qemu_config = WizardQemuConfig::from_profile(profile);
+    }
+
+    /// Check if the wizard can proceed to the next step
+    pub fn can_proceed(&self) -> Result<(), String> {
+        match self.step {
+            WizardStep::SelectOs => {
+                if self.vm_name.trim().is_empty() {
+                    return Err("Please enter a VM name".to_string());
+                }
+                if self.selected_os.is_none() && self.custom_os.is_none() {
+                    return Err("Please select an operating system".to_string());
+                }
+                Ok(())
+            }
+            WizardStep::SelectIso => {
+                // ISO is optional - user can configure later
+                Ok(())
+            }
+            WizardStep::ConfigureDisk => {
+                if self.disk_size_gb == 0 {
+                    return Err("Disk size must be greater than 0".to_string());
+                }
+                if self.disk_size_gb > 10000 {
+                    return Err("Disk size cannot exceed 10TB".to_string());
+                }
+                Ok(())
+            }
+            WizardStep::ConfigureQemu => {
+                if self.qemu_config.memory_mb == 0 {
+                    return Err("Memory must be greater than 0".to_string());
+                }
+                if self.qemu_config.cpu_cores == 0 {
+                    return Err("CPU cores must be greater than 0".to_string());
+                }
+                Ok(())
+            }
+            WizardStep::Confirm => Ok(()),
+        }
+    }
+
+    /// Toggle a category's expanded state
+    pub fn toggle_category(&mut self, category: &str) {
+        if let Some(pos) = self.expanded_categories.iter().position(|c| c == category) {
+            self.expanded_categories.remove(pos);
+        } else {
+            self.expanded_categories.push(category.to_string());
+        }
+    }
+
+    /// Check if a category is expanded
+    pub fn is_category_expanded(&self, category: &str) -> bool {
+        self.expanded_categories.iter().any(|c| c == category)
+    }
 }
 
 /// Application state
@@ -142,6 +492,10 @@ pub struct App {
     pub script_editor_modified: bool,
     /// Horizontal scroll offset for the editor
     pub script_editor_h_scroll: usize,
+    /// QEMU profiles for VM creation
+    pub qemu_profiles: QemuProfileStore,
+    /// VM creation wizard state
+    pub wizard_state: Option<CreateWizardState>,
 }
 
 /// Entry in file browser
@@ -179,6 +533,15 @@ impl App {
 
         // Load hierarchy config
         let hierarchy = HierarchyConfig::load_embedded();
+
+        // Load QEMU profiles
+        let mut qemu_profiles = QemuProfileStore::load_embedded();
+        let config_dir = Config::config_file_path()
+            .parent()
+            .map(|p| p.to_path_buf())
+            .unwrap_or_else(|| PathBuf::from("."));
+        let user_profiles_path = config_dir.join("qemu_profiles.toml");
+        qemu_profiles.load_user_overrides(&user_profiles_path);
 
         let filtered_indices: Vec<usize> = (0..vms.len()).collect();
         let visual_order = build_visual_order(&vms, &filtered_indices, &hierarchy, &metadata);
@@ -221,6 +584,8 @@ impl App {
             script_editor_cursor: (0, 0),
             script_editor_modified: false,
             script_editor_h_scroll: 0,
+            qemu_profiles,
+            wizard_state: None,
         })
     }
 
@@ -598,5 +963,119 @@ impl App {
     /// Get the path to the launch script for the selected VM
     pub fn selected_vm_script_path(&self) -> Option<std::path::PathBuf> {
         self.selected_vm().map(|vm| vm.launch_script.clone())
+    }
+
+    // =========================================================================
+    // VM Creation Wizard Methods
+    // =========================================================================
+
+    /// Start the VM creation wizard
+    pub fn start_create_wizard(&mut self) {
+        self.wizard_state = Some(CreateWizardState::default());
+        self.push_screen(Screen::CreateWizard);
+    }
+
+    /// Cancel the wizard and return to main menu
+    pub fn cancel_wizard(&mut self) {
+        self.wizard_state = None;
+        // Pop all wizard-related screens
+        while matches!(
+            self.screen,
+            Screen::CreateWizard | Screen::CreateWizardCustomOs | Screen::CreateWizardDownload
+        ) {
+            self.pop_screen();
+        }
+    }
+
+    /// Move to the next wizard step
+    pub fn wizard_next_step(&mut self) -> Result<(), String> {
+        if let Some(ref mut state) = self.wizard_state {
+            // Validate current step
+            state.can_proceed()?;
+
+            // Move to next step
+            if let Some(next) = state.step.next() {
+                state.step = next;
+                state.field_focus = 0;
+                state.error_message = None;
+                Ok(())
+            } else {
+                Err("Already at final step".to_string())
+            }
+        } else {
+            Err("Wizard not active".to_string())
+        }
+    }
+
+    /// Move to the previous wizard step
+    pub fn wizard_prev_step(&mut self) {
+        if let Some(ref mut state) = self.wizard_state {
+            if let Some(prev) = state.step.prev() {
+                state.step = prev;
+                state.field_focus = 0;
+                state.error_message = None;
+            }
+        }
+    }
+
+    /// Select an OS profile in the wizard
+    pub fn wizard_select_os(&mut self, os_id: &str) {
+        if let Some(ref mut state) = self.wizard_state {
+            state.selected_os = Some(os_id.to_string());
+            state.custom_os = None;
+
+            // Apply profile settings
+            if let Some(profile) = self.qemu_profiles.get(os_id) {
+                state.apply_profile(profile);
+
+                // If VM name is empty, suggest the display name
+                if state.vm_name.is_empty() {
+                    state.vm_name = profile.display_name.clone();
+                    state.update_folder_name();
+                }
+            }
+        }
+    }
+
+    /// Set the wizard to use a custom OS
+    pub fn wizard_use_custom_os(&mut self) {
+        if let Some(ref mut state) = self.wizard_state {
+            state.selected_os = None;
+            state.custom_os = Some(CustomOsEntry {
+                base_profile: "generic-other".to_string(),
+                architecture: "x86_64".to_string(),
+                ..Default::default()
+            });
+            self.push_screen(Screen::CreateWizardCustomOs);
+        }
+    }
+
+    /// Check if the wizard has a folder name conflict
+    pub fn wizard_folder_exists(&self) -> bool {
+        if let Some(ref state) = self.wizard_state {
+            if state.folder_name.is_empty() {
+                return false;
+            }
+            let vm_path = self.config.vm_library_path.join(&state.folder_name);
+            vm_path.exists()
+        } else {
+            false
+        }
+    }
+
+    /// Get the full path where the new VM will be created
+    pub fn wizard_vm_path(&self) -> Option<PathBuf> {
+        self.wizard_state
+            .as_ref()
+            .filter(|s| !s.folder_name.is_empty())
+            .map(|s| self.config.vm_library_path.join(&s.folder_name))
+    }
+
+    /// Get the selected OS profile in the wizard
+    pub fn wizard_selected_profile(&self) -> Option<&crate::metadata::QemuProfile> {
+        self.wizard_state
+            .as_ref()
+            .and_then(|s| s.selected_os.as_ref())
+            .and_then(|os_id| self.qemu_profiles.get(os_id))
     }
 }
