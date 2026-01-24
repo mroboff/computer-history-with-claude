@@ -198,3 +198,57 @@ pub fn commit_disk(path: &Path) -> Result<()> {
 
     Ok(())
 }
+
+/// Disk image information
+#[derive(Debug)]
+pub struct DiskInfo {
+    pub format: String,
+    pub virtual_size: u64,
+    pub actual_size: Option<u64>,
+    pub backing_file: Option<String>,
+}
+
+/// Get information about a disk image using qemu-img info
+pub fn get_disk_info(path: &Path) -> Result<DiskInfo> {
+    let path_str = path_to_str(path)?;
+    let output = Command::new("qemu-img")
+        .args(["info", "--output=json", path_str])
+        .output()
+        .context("Failed to run qemu-img info")?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        bail!("Failed to get disk info: {}", stderr);
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let json: serde_json::Value = serde_json::from_str(&stdout)
+        .context("Failed to parse qemu-img info output")?;
+
+    let format = json["format"]
+        .as_str()
+        .unwrap_or("unknown")
+        .to_string();
+
+    let virtual_size = json["virtual-size"]
+        .as_u64()
+        .unwrap_or(0);
+
+    let actual_size = json["actual-size"].as_u64();
+
+    let backing_file = json["backing-filename"]
+        .as_str()
+        .map(|s| s.to_string());
+
+    Ok(DiskInfo {
+        format,
+        virtual_size,
+        actual_size,
+        backing_file,
+    })
+}
+
+/// Detect the format of a disk image (returns format string like "qcow2", "raw", etc.)
+pub fn detect_disk_format(path: &Path) -> Option<String> {
+    get_disk_info(path).ok().map(|info| info.format)
+}

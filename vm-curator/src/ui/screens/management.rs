@@ -12,7 +12,7 @@ pub const MENU_ITEMS: &[&str] = &[
     "USB Passthrough",
     "Reset VM (recreate disk)",
     "Delete VM",
-    "View Configuration",
+    "Edit Raw Configuration",
 ];
 
 /// Render the management menu
@@ -72,7 +72,7 @@ pub fn render(app: &App, frame: &mut Frame) {
                 2 => "Pass USB devices to the VM",
                 3 => "Restore VM to fresh state",
                 4 => "Permanently remove this VM",
-                5 => "View QEMU settings and launch script",
+                5 => "Edit the launch.sh script directly",
                 _ => "",
             };
 

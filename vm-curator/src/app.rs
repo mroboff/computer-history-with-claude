@@ -58,6 +58,7 @@ pub enum ConfirmAction {
     DeleteVm,
     DeleteSnapshot(String),
     RestoreSnapshot(String),
+    DiscardScriptChanges,
 }
 
 /// Input mode for text entry
@@ -133,6 +134,14 @@ pub struct App {
     pub info_scroll: u16,
     /// Raw script view scroll position
     pub raw_script_scroll: u16,
+    /// Script editor buffer (lines of text)
+    pub script_editor_lines: Vec<String>,
+    /// Script editor cursor position (line, column)
+    pub script_editor_cursor: (usize, usize),
+    /// Whether the script has been modified
+    pub script_editor_modified: bool,
+    /// Horizontal scroll offset for the editor
+    pub script_editor_h_scroll: usize,
 }
 
 /// Entry in file browser
@@ -208,6 +217,10 @@ impl App {
             error_scroll: 0,
             info_scroll: 0,
             raw_script_scroll: 0,
+            script_editor_lines: Vec::new(),
+            script_editor_cursor: (0, 0),
+            script_editor_modified: false,
+            script_editor_h_scroll: 0,
         })
     }
 
@@ -536,5 +549,54 @@ impl App {
         if self.file_browser_selected < self.file_browser_entries.len().saturating_sub(1) {
             self.file_browser_selected += 1;
         }
+    }
+
+    /// Load the selected VM's script into the editor
+    pub fn load_script_into_editor(&mut self) {
+        if let Some(vm) = self.selected_vm() {
+            self.script_editor_lines = vm.config.raw_script.lines().map(String::from).collect();
+            // Ensure at least one line exists
+            if self.script_editor_lines.is_empty() {
+                self.script_editor_lines.push(String::new());
+            }
+            self.script_editor_cursor = (0, 0);
+            self.script_editor_modified = false;
+            self.script_editor_h_scroll = 0;
+            self.raw_script_scroll = 0;
+        }
+    }
+
+    /// Save the editor content back to the launch.sh file
+    pub fn save_script_from_editor(&mut self) -> Result<()> {
+        if let Some(vm) = self.selected_vm() {
+            let content = self.script_editor_lines.join("\n");
+            // Ensure the file ends with a newline
+            let content = if content.ends_with('\n') {
+                content
+            } else {
+                format!("{}\n", content)
+            };
+
+            std::fs::write(&vm.launch_script, &content)?;
+
+            // Update the cached raw_script in the VM
+            self.reload_selected_vm_script();
+            self.script_editor_modified = false;
+
+            // Re-parse the VM config since the script changed
+            if let Ok(vms) = discover_vms(&self.config.vm_library_path) {
+                self.vms = vms;
+                self.update_filter();
+            }
+
+            Ok(())
+        } else {
+            anyhow::bail!("No VM selected")
+        }
+    }
+
+    /// Get the path to the launch script for the selected VM
+    pub fn selected_vm_script_path(&self) -> Option<std::path::PathBuf> {
+        self.selected_vm().map(|vm| vm.launch_script.clone())
     }
 }

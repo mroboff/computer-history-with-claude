@@ -63,54 +63,215 @@ fn handle_mouse(app: &mut App, mouse: MouseEvent) -> Result<()> {
             }
         }
         MouseEventKind::Down(crossterm::event::MouseButton::Left) => {
-            if app.screen == Screen::MainMenu {
-                // Calculate VM list area using same layout as render
-                // This matches the layout in screens/main_menu.rs
-                if let Ok((term_width, term_height)) = crossterm::terminal::size() {
-                    // Main layout: title (3), content (rest), help (3)
-                    let title_height = 3u16;
-                    let help_height = 3u16;
-                    let content_y = title_height;
-                    let content_height = term_height.saturating_sub(title_height + help_height);
-
-                    // VM list is 40% of content width on the left
-                    let list_width = (term_width * 40) / 100;
-
-                    // List area with borders: inner area starts at +1 from each edge
-                    let list_inner_x = 1u16;
-                    let list_inner_y = content_y + 1; // +1 for block border
-                    let list_inner_width = list_width.saturating_sub(2);
-                    let list_inner_height = content_height.saturating_sub(2);
-
-                    // Check if click is within the list inner area
-                    let click_x = mouse.column;
-                    let click_y = mouse.row;
-
-                    if click_x >= list_inner_x
-                        && click_x < list_inner_x + list_inner_width
-                        && click_y >= list_inner_y
-                        && click_y < list_inner_y + list_inner_height
-                    {
-                        // Calculate which row was clicked
-                        let clicked_row = (click_y - list_inner_y) as usize;
-
-                        // Map clicked row to visual_order index (accounting for header rows)
-                        if let Some(visual_idx) = widgets::click_row_to_visual_index(
-                            &app.vms,
-                            &app.filtered_indices,
-                            &app.hierarchy,
-                            &app.metadata,
-                            &app.visual_order,
-                            clicked_row,
-                        ) {
-                            app.selected_vm = visual_idx;
-                            app.info_scroll = 0; // Reset scroll when VM changes
-                        }
-                    }
+            match &app.screen {
+                Screen::MainMenu => {
+                    handle_main_menu_click(app, mouse.column, mouse.row)?;
                 }
+                Screen::Confirm(action) => {
+                    handle_confirm_click(app, action.clone(), mouse.column, mouse.row)?;
+                }
+                _ => {}
             }
         }
         _ => {}
+    }
+    Ok(())
+}
+
+/// Handle mouse click in the main menu
+fn handle_main_menu_click(app: &mut App, click_x: u16, click_y: u16) -> Result<()> {
+    if let Ok((term_width, term_height)) = crossterm::terminal::size() {
+        // Main layout: title (3), content (rest), help (3)
+        let title_height = 3u16;
+        let help_height = 3u16;
+        let content_y = title_height;
+        let content_height = term_height.saturating_sub(title_height + help_height);
+
+        // VM list is 40% of content width on the left
+        let list_width = (term_width * 40) / 100;
+
+        // List area with borders: inner area starts at +1 from each edge
+        let list_inner_x = 1u16;
+        let list_inner_y = content_y + 1; // +1 for block border
+        let list_inner_width = list_width.saturating_sub(2);
+        let list_inner_height = content_height.saturating_sub(2);
+
+        // Check if click is within the list inner area
+        if click_x >= list_inner_x
+            && click_x < list_inner_x + list_inner_width
+            && click_y >= list_inner_y
+            && click_y < list_inner_y + list_inner_height
+        {
+            // Calculate which row was clicked
+            let clicked_row = (click_y - list_inner_y) as usize;
+
+            // Map clicked row to visual_order index (accounting for header rows)
+            if let Some(visual_idx) = widgets::click_row_to_visual_index(
+                &app.vms,
+                &app.filtered_indices,
+                &app.hierarchy,
+                &app.metadata,
+                &app.visual_order,
+                clicked_row,
+            ) {
+                // If clicking on already-selected VM, show launch confirmation
+                if visual_idx == app.selected_vm && app.selected_vm().is_some() {
+                    app.push_screen(Screen::Confirm(ConfirmAction::LaunchVm));
+                } else {
+                    // Otherwise, just select the VM
+                    app.selected_vm = visual_idx;
+                    app.info_scroll = 0; // Reset scroll when VM changes
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Handle mouse click in the confirmation dialog
+fn handle_confirm_click(app: &mut App, action: ConfirmAction, click_x: u16, click_y: u16) -> Result<()> {
+    if let Ok((term_width, term_height)) = crossterm::terminal::size() {
+        let area = Rect::new(0, 0, term_width, term_height);
+
+        // Calculate dialog dimensions (same as ConfirmDialog::render)
+        let dialog_width = 50.min(area.width.saturating_sub(4));
+        let dialog_height = 8.min(area.height.saturating_sub(4));
+
+        // Calculate centered position
+        let dialog_x = area.x + (area.width.saturating_sub(dialog_width)) / 2;
+        let dialog_y = area.y + (area.height.saturating_sub(dialog_height)) / 2;
+
+        // Inner area after borders (1 pixel each side)
+        let inner_x = dialog_x + 1;
+        let inner_y = dialog_y + 1;
+        let inner_width = dialog_width.saturating_sub(2);
+        let inner_height = dialog_height.saturating_sub(2);
+
+        // Buttons are in the bottom 2 rows of the inner area
+        let buttons_y = inner_y + inner_height.saturating_sub(2);
+
+        // Check if click is in the buttons row
+        if click_y >= buttons_y && click_y < buttons_y + 2 {
+            // Buttons are centered: " Yes (y) "  "  "  " No (n) "
+            // Yes button is roughly in the left half, No in the right half
+            let center_x = inner_x + inner_width / 2;
+
+            if click_x >= inner_x && click_x < center_x {
+                // Clicked on Yes - execute the action
+                execute_confirm_action(app, action)?;
+            } else if click_x >= center_x && click_x < inner_x + inner_width {
+                // Clicked on No - cancel
+                app.pop_screen();
+            }
+        }
+
+        // Allow clicking outside the dialog to cancel
+        if click_x < dialog_x || click_x >= dialog_x + dialog_width
+            || click_y < dialog_y || click_y >= dialog_y + dialog_height
+        {
+            app.pop_screen();
+        }
+    }
+    Ok(())
+}
+
+/// Execute a confirmed action (extracted from handle_confirm for reuse)
+fn execute_confirm_action(app: &mut App, action: ConfirmAction) -> Result<()> {
+    match action {
+        ConfirmAction::LaunchVm => {
+            if let Some(vm) = app.selected_vm().cloned() {
+                if is_vm_running(&vm) {
+                    app.set_status(format!("{} is already running", vm.display_name()));
+                } else {
+                    let options = app.get_launch_options();
+                    if let Err(e) = launch_vm_sync(&vm, &options) {
+                        app.set_status(format!("Error: {}", e));
+                    } else {
+                        app.set_status(format!("Launched: {}", vm.display_name()));
+                    }
+                }
+            }
+            app.pop_screen();
+        }
+        ConfirmAction::ResetVm => {
+            if let Some(vm) = app.selected_vm() {
+                if is_vm_running(vm) {
+                    app.set_status("Error: Cannot reset VM while it is running. Please shut down the VM first.");
+                } else if let Err(e) = crate::vm::lifecycle::reset_vm(vm) {
+                    app.set_status(format!("Error: {}", e));
+                } else {
+                    app.set_status("VM reset to fresh state");
+                }
+            }
+            app.pop_screen();
+            app.pop_screen();
+        }
+        ConfirmAction::DeleteVm => {
+            if let Some(vm) = app.selected_vm().cloned() {
+                if let Err(e) = crate::vm::lifecycle::delete_vm(&vm, false) {
+                    app.set_status(format!("Error: {}", e));
+                } else {
+                    app.set_status(format!("Deleted: {}", vm.display_name()));
+                    app.refresh_vms()?;
+                }
+            }
+            app.pop_screen();
+            app.pop_screen();
+        }
+        ConfirmAction::RestoreSnapshot(name) => {
+            if let Some(vm) = app.selected_vm() {
+                if is_vm_running(vm) {
+                    app.set_status("Error: Cannot restore snapshot while VM is running. Please shut down the VM first.");
+                } else if let Some(disk) = vm.config.primary_disk() {
+                    let disk_path = disk.path.clone();
+                    let snap_name = name.clone();
+                    let tx = app.background_tx.clone();
+                    app.loading = true;
+                    app.set_status(format!("Restoring snapshot: {}...", name));
+
+                    thread::spawn(move || {
+                        let result = crate::vm::restore_snapshot(&disk_path, &snap_name);
+                        let _ = tx.send(BackgroundResult::SnapshotRestored {
+                            name: snap_name,
+                            success: result.is_ok(),
+                            error: result.err().map(|e| e.to_string()),
+                        });
+                    });
+                }
+            }
+            app.pop_screen();
+        }
+        ConfirmAction::DeleteSnapshot(name) => {
+            if let Some(vm) = app.selected_vm() {
+                if is_vm_running(vm) {
+                    app.set_status("Error: Cannot delete snapshot while VM is running. Please shut down the VM first.");
+                } else if let Some(disk) = vm.config.primary_disk() {
+                    let disk_path = disk.path.clone();
+                    let snap_name = name.clone();
+                    let tx = app.background_tx.clone();
+                    app.loading = true;
+                    app.set_status(format!("Deleting snapshot: {}...", name));
+
+                    thread::spawn(move || {
+                        let result = crate::vm::delete_snapshot(&disk_path, &snap_name);
+                        let _ = tx.send(BackgroundResult::SnapshotDeleted {
+                            name: snap_name,
+                            success: result.is_ok(),
+                            error: result.err().map(|e| e.to_string()),
+                        });
+                    });
+                }
+            }
+            app.pop_screen();
+        }
+        ConfirmAction::DiscardScriptChanges => {
+            // Discard changes and exit editor
+            app.raw_script_scroll = 0;
+            app.script_editor_lines.clear();
+            app.script_editor_modified = false;
+            app.pop_screen(); // Close confirm dialog
+            app.pop_screen(); // Close editor
+        }
     }
     Ok(())
 }
@@ -308,7 +469,10 @@ fn handle_management(app: &mut App, key: KeyEvent) -> Result<()> {
                 }
                 3 => app.push_screen(Screen::Confirm(ConfirmAction::ResetVm)),
                 4 => app.push_screen(Screen::Confirm(ConfirmAction::DeleteVm)),
-                5 => app.push_screen(Screen::Configuration),
+                5 => {
+                    app.load_script_into_editor();
+                    app.push_screen(Screen::RawScript);
+                }
                 _ => {}
             }
         }
@@ -329,26 +493,192 @@ fn handle_configuration(app: &mut App, key: KeyEvent) -> Result<()> {
 }
 
 fn handle_raw_script(app: &mut App, key: KeyEvent) -> Result<()> {
-    match key.code {
-        KeyCode::Esc => {
-            app.raw_script_scroll = 0; // Reset scroll when leaving
-            app.pop_screen();
+    let total_lines = app.script_editor_lines.len();
+
+    match (key.code, key.modifiers) {
+        // Save with Ctrl+S
+        (KeyCode::Char('s'), m) if m.contains(KeyModifiers::CONTROL) => {
+            match app.save_script_from_editor() {
+                Ok(()) => app.set_status("Script saved successfully"),
+                Err(e) => app.set_status(format!("Error saving script: {}", e)),
+            }
         }
-        KeyCode::Down | KeyCode::Char('j') => {
-            app.raw_script_scroll = app.raw_script_scroll.saturating_add(1);
+
+        // Cancel/Exit with Esc
+        (KeyCode::Esc, _) => {
+            if app.script_editor_modified {
+                // Show confirmation if modified
+                app.push_screen(Screen::Confirm(ConfirmAction::DiscardScriptChanges));
+            } else {
+                app.raw_script_scroll = 0;
+                app.script_editor_lines.clear();
+                app.pop_screen();
+            }
         }
-        KeyCode::Up | KeyCode::Char('k') => {
-            app.raw_script_scroll = app.raw_script_scroll.saturating_sub(1);
+
+        // Navigation
+        (KeyCode::Up, _) => {
+            if app.script_editor_cursor.0 > 0 {
+                app.script_editor_cursor.0 -= 1;
+                // Adjust column if new line is shorter
+                let line_len = app.script_editor_lines.get(app.script_editor_cursor.0)
+                    .map(|l| l.len()).unwrap_or(0);
+                if app.script_editor_cursor.1 > line_len {
+                    app.script_editor_cursor.1 = line_len;
+                }
+                // Scroll up if cursor goes above visible area
+                if app.script_editor_cursor.0 < app.raw_script_scroll as usize {
+                    app.raw_script_scroll = app.script_editor_cursor.0 as u16;
+                }
+            }
         }
-        KeyCode::PageDown => {
-            app.raw_script_scroll = app.raw_script_scroll.saturating_add(10);
+        (KeyCode::Down, _) => {
+            if app.script_editor_cursor.0 < total_lines.saturating_sub(1) {
+                app.script_editor_cursor.0 += 1;
+                // Adjust column if new line is shorter
+                let line_len = app.script_editor_lines.get(app.script_editor_cursor.0)
+                    .map(|l| l.len()).unwrap_or(0);
+                if app.script_editor_cursor.1 > line_len {
+                    app.script_editor_cursor.1 = line_len;
+                }
+                // Scroll down if needed (assuming ~35 visible lines)
+                let visible_height = 35usize;
+                if app.script_editor_cursor.0 >= app.raw_script_scroll as usize + visible_height {
+                    app.raw_script_scroll = (app.script_editor_cursor.0 - visible_height + 1) as u16;
+                }
+            }
         }
-        KeyCode::PageUp => {
-            app.raw_script_scroll = app.raw_script_scroll.saturating_sub(10);
+        (KeyCode::Left, _) => {
+            if app.script_editor_cursor.1 > 0 {
+                app.script_editor_cursor.1 -= 1;
+            } else if app.script_editor_cursor.0 > 0 {
+                // Move to end of previous line
+                app.script_editor_cursor.0 -= 1;
+                app.script_editor_cursor.1 = app.script_editor_lines.get(app.script_editor_cursor.0)
+                    .map(|l| l.len()).unwrap_or(0);
+            }
+            // Adjust horizontal scroll
+            if app.script_editor_cursor.1 < app.script_editor_h_scroll {
+                app.script_editor_h_scroll = app.script_editor_cursor.1;
+            }
         }
-        KeyCode::Home => {
-            app.raw_script_scroll = 0;
+        (KeyCode::Right, _) => {
+            let line_len = app.script_editor_lines.get(app.script_editor_cursor.0)
+                .map(|l| l.len()).unwrap_or(0);
+            if app.script_editor_cursor.1 < line_len {
+                app.script_editor_cursor.1 += 1;
+            } else if app.script_editor_cursor.0 < total_lines.saturating_sub(1) {
+                // Move to start of next line
+                app.script_editor_cursor.0 += 1;
+                app.script_editor_cursor.1 = 0;
+            }
+            // Adjust horizontal scroll (assuming ~80 visible columns)
+            let visible_width = 80usize;
+            if app.script_editor_cursor.1 >= app.script_editor_h_scroll + visible_width {
+                app.script_editor_h_scroll = app.script_editor_cursor.1 - visible_width + 1;
+            }
         }
+        (KeyCode::Home, _) => {
+            app.script_editor_cursor.1 = 0;
+            app.script_editor_h_scroll = 0;
+        }
+        (KeyCode::End, _) => {
+            let line_len = app.script_editor_lines.get(app.script_editor_cursor.0)
+                .map(|l| l.len()).unwrap_or(0);
+            app.script_editor_cursor.1 = line_len;
+        }
+        (KeyCode::PageUp, _) => {
+            let jump = 20;
+            app.script_editor_cursor.0 = app.script_editor_cursor.0.saturating_sub(jump);
+            app.raw_script_scroll = app.raw_script_scroll.saturating_sub(jump as u16);
+            // Adjust column
+            let line_len = app.script_editor_lines.get(app.script_editor_cursor.0)
+                .map(|l| l.len()).unwrap_or(0);
+            if app.script_editor_cursor.1 > line_len {
+                app.script_editor_cursor.1 = line_len;
+            }
+        }
+        (KeyCode::PageDown, _) => {
+            let jump = 20;
+            app.script_editor_cursor.0 = (app.script_editor_cursor.0 + jump).min(total_lines.saturating_sub(1));
+            app.raw_script_scroll = (app.raw_script_scroll + jump as u16).min(total_lines.saturating_sub(1) as u16);
+            // Adjust column
+            let line_len = app.script_editor_lines.get(app.script_editor_cursor.0)
+                .map(|l| l.len()).unwrap_or(0);
+            if app.script_editor_cursor.1 > line_len {
+                app.script_editor_cursor.1 = line_len;
+            }
+        }
+
+        // Editing - Enter (new line)
+        (KeyCode::Enter, _) => {
+            let (line_idx, col) = app.script_editor_cursor;
+            if let Some(line) = app.script_editor_lines.get_mut(line_idx) {
+                let remainder = line[col..].to_string();
+                line.truncate(col);
+                app.script_editor_lines.insert(line_idx + 1, remainder);
+                app.script_editor_cursor = (line_idx + 1, 0);
+                app.script_editor_modified = true;
+            }
+        }
+
+        // Editing - Backspace
+        (KeyCode::Backspace, _) => {
+            let (line_idx, col) = app.script_editor_cursor;
+            if col > 0 {
+                if let Some(line) = app.script_editor_lines.get_mut(line_idx) {
+                    line.remove(col - 1);
+                    app.script_editor_cursor.1 -= 1;
+                    app.script_editor_modified = true;
+                }
+            } else if line_idx > 0 {
+                // Join with previous line
+                let current_line = app.script_editor_lines.remove(line_idx);
+                if let Some(prev_line) = app.script_editor_lines.get_mut(line_idx - 1) {
+                    let prev_len = prev_line.len();
+                    prev_line.push_str(&current_line);
+                    app.script_editor_cursor = (line_idx - 1, prev_len);
+                    app.script_editor_modified = true;
+                }
+            }
+        }
+
+        // Editing - Delete
+        (KeyCode::Delete, _) => {
+            let (line_idx, col) = app.script_editor_cursor;
+            if let Some(line) = app.script_editor_lines.get_mut(line_idx) {
+                if col < line.len() {
+                    line.remove(col);
+                    app.script_editor_modified = true;
+                } else if line_idx < total_lines - 1 {
+                    // Join with next line
+                    let next_line = app.script_editor_lines.remove(line_idx + 1);
+                    app.script_editor_lines.get_mut(line_idx).unwrap().push_str(&next_line);
+                    app.script_editor_modified = true;
+                }
+            }
+        }
+
+        // Editing - Tab (insert 4 spaces)
+        (KeyCode::Tab, _) => {
+            let (line_idx, col) = app.script_editor_cursor;
+            if let Some(line) = app.script_editor_lines.get_mut(line_idx) {
+                line.insert_str(col, "    ");
+                app.script_editor_cursor.1 += 4;
+                app.script_editor_modified = true;
+            }
+        }
+
+        // Typing characters
+        (KeyCode::Char(c), m) if !m.contains(KeyModifiers::CONTROL) => {
+            let (line_idx, col) = app.script_editor_cursor;
+            if let Some(line) = app.script_editor_lines.get_mut(line_idx) {
+                line.insert(col, c);
+                app.script_editor_cursor.1 += 1;
+                app.script_editor_modified = true;
+            }
+        }
+
         _ => {}
     }
     Ok(())
@@ -532,100 +862,7 @@ fn handle_confirm(app: &mut App, action: ConfirmAction, key: KeyEvent) -> Result
     match key.code {
         KeyCode::Esc | KeyCode::Char('n') => app.pop_screen(),
         KeyCode::Char('y') | KeyCode::Enter => {
-            match action {
-                ConfirmAction::LaunchVm => {
-                    if let Some(vm) = app.selected_vm().cloned() {
-                        // Check if VM is already running to prevent duplicate launches
-                        if is_vm_running(&vm) {
-                            app.set_status(format!("{} is already running", vm.display_name()));
-                        } else {
-                            let options = app.get_launch_options();
-                            if let Err(e) = launch_vm_sync(&vm, &options) {
-                                app.set_status(format!("Error: {}", e));
-                            } else {
-                                app.set_status(format!("Launched: {}", vm.display_name()));
-                            }
-                        }
-                    }
-                    app.pop_screen();
-                }
-                ConfirmAction::ResetVm => {
-                    if let Some(vm) = app.selected_vm() {
-                        // Check if VM is running - resetting while running would be dangerous
-                        if is_vm_running(vm) {
-                            app.set_status("Error: Cannot reset VM while it is running. Please shut down the VM first.");
-                        } else if let Err(e) = crate::vm::lifecycle::reset_vm(vm) {
-                            app.set_status(format!("Error: {}", e));
-                        } else {
-                            app.set_status("VM reset to fresh state");
-                        }
-                    }
-                    app.pop_screen();
-                    app.pop_screen(); // Back to main menu
-                }
-                ConfirmAction::DeleteVm => {
-                    if let Some(vm) = app.selected_vm().cloned() {
-                        if let Err(e) = crate::vm::lifecycle::delete_vm(&vm, false) {
-                            app.set_status(format!("Error: {}", e));
-                        } else {
-                            app.set_status(format!("Deleted: {}", vm.display_name()));
-                            app.refresh_vms()?;
-                        }
-                    }
-                    app.pop_screen();
-                    app.pop_screen();
-                }
-                ConfirmAction::RestoreSnapshot(name) => {
-                    if let Some(vm) = app.selected_vm() {
-                        // Check if VM is running - restoring snapshots on running VMs is dangerous
-                        if is_vm_running(vm) {
-                            app.set_status("Error: Cannot restore snapshot while VM is running. Please shut down the VM first.");
-                        } else if let Some(disk) = vm.config.primary_disk() {
-                            // Spawn background thread for snapshot restore
-                            let disk_path = disk.path.clone();
-                            let snap_name = name.clone();
-                            let tx = app.background_tx.clone();
-                            app.loading = true;
-                            app.set_status(format!("Restoring snapshot: {}...", name));
-
-                            thread::spawn(move || {
-                                let result = crate::vm::restore_snapshot(&disk_path, &snap_name);
-                                let _ = tx.send(BackgroundResult::SnapshotRestored {
-                                    name: snap_name,
-                                    success: result.is_ok(),
-                                    error: result.err().map(|e| e.to_string()),
-                                });
-                            });
-                        }
-                    }
-                    app.pop_screen();
-                }
-                ConfirmAction::DeleteSnapshot(name) => {
-                    if let Some(vm) = app.selected_vm() {
-                        // Check if VM is running - deleting snapshots on running VMs can cause issues
-                        if is_vm_running(vm) {
-                            app.set_status("Error: Cannot delete snapshot while VM is running. Please shut down the VM first.");
-                        } else if let Some(disk) = vm.config.primary_disk() {
-                            // Spawn background thread for snapshot delete
-                            let disk_path = disk.path.clone();
-                            let snap_name = name.clone();
-                            let tx = app.background_tx.clone();
-                            app.loading = true;
-                            app.set_status(format!("Deleting snapshot: {}...", name));
-
-                            thread::spawn(move || {
-                                let result = crate::vm::delete_snapshot(&disk_path, &snap_name);
-                                let _ = tx.send(BackgroundResult::SnapshotDeleted {
-                                    name: snap_name,
-                                    success: result.is_ok(),
-                                    error: result.err().map(|e| e.to_string()),
-                                });
-                            });
-                        }
-                    }
-                    app.pop_screen();
-                }
-            }
+            execute_confirm_action(app, action)?;
         }
         _ => {}
     }
@@ -710,6 +947,9 @@ fn render_confirm(app: &App, action: &ConfirmAction, frame: &mut Frame) {
         }
         ConfirmAction::DeleteSnapshot(name) => {
             ("Delete Snapshot", format!("Delete snapshot '{}'? This cannot be undone.", name))
+        }
+        ConfirmAction::DiscardScriptChanges => {
+            ("Discard Changes", "You have unsaved changes. Discard them?".to_string())
         }
     };
 

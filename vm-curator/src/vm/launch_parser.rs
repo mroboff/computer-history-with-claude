@@ -1,7 +1,9 @@
-use anyhow::{Context, Result};
+use anyhow::Result;
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use super::qemu_config::*;
+use crate::commands::qemu_img;
 
 /// Parse a launch.sh script and extract QEMU configuration
 pub fn parse_launch_script(script_path: &Path, content: &str) -> Result<QemuConfig> {
@@ -227,9 +229,146 @@ fn extract_audio_devices(content: &str) -> Vec<AudioDevice> {
     devices
 }
 
+/// Extract shell variable assignments from the script
+fn extract_shell_variables(content: &str, vm_dir: &Path) -> HashMap<String, String> {
+    let mut vars = HashMap::new();
+
+    // Pre-populate with common directory variables
+    let vm_dir_str = vm_dir.to_string_lossy().to_string();
+    vars.insert("VM_DIR".to_string(), vm_dir_str.clone());
+    vars.insert("DIR".to_string(), vm_dir_str.clone());
+
+    // Parse variable assignments like: VAR="value" or VAR='value' or VAR=value
+    for line in content.lines() {
+        let trimmed = line.trim();
+
+        // Skip comments and empty lines
+        if trimmed.starts_with('#') || trimmed.is_empty() {
+            continue;
+        }
+
+        // Look for variable assignments (NAME=value pattern)
+        if let Some(eq_pos) = trimmed.find('=') {
+            let name = trimmed[..eq_pos].trim();
+
+            // Variable names must be valid shell identifiers
+            if !name.is_empty()
+                && name.chars().all(|c| c.is_alphanumeric() || c == '_')
+                && !name.chars().next().unwrap_or('0').is_ascii_digit()
+            {
+                let value_part = trimmed[eq_pos + 1..].trim();
+
+                // Extract the value, handling quotes with proper nesting
+                let value = extract_quoted_value(value_part);
+
+                // Expand any variables in the value
+                let expanded = expand_variables(&value, &vars, vm_dir);
+                vars.insert(name.to_string(), expanded);
+            }
+        }
+    }
+
+    vars
+}
+
+/// Extract a quoted value, handling nested quotes and command substitutions
+fn extract_quoted_value(s: &str) -> String {
+    if s.starts_with('"') {
+        // Find the matching closing quote, accounting for nested quotes in $()
+        let chars: Vec<char> = s.chars().collect();
+        let mut depth = 0;
+        let mut end_idx = s.len() - 1;
+
+        for (i, &c) in chars.iter().enumerate().skip(1) {
+            match c {
+                '(' if i > 0 && chars[i - 1] == '$' => depth += 1,
+                ')' if depth > 0 => depth -= 1,
+                '"' if depth == 0 => {
+                    end_idx = i;
+                    break;
+                }
+                _ => {}
+            }
+        }
+
+        s[1..end_idx].to_string()
+    } else if s.starts_with('\'') {
+        // Single quotes don't nest - find first closing quote
+        if let Some(end) = s[1..].find('\'') {
+            s[1..=end].to_string()
+        } else {
+            s[1..].to_string()
+        }
+    } else {
+        // Unquoted value - take until whitespace or comment
+        s.chars()
+            .take_while(|c| !c.is_whitespace() && *c != '#')
+            .collect()
+    }
+}
+
+/// Expand shell variables in a string
+fn expand_variables(s: &str, vars: &HashMap<String, String>, vm_dir: &Path) -> String {
+    let mut result = s.to_string();
+    let vm_dir_str = vm_dir.to_string_lossy();
+
+    // Handle $(dirname ...) patterns - replace with vm_dir
+    while result.contains("$(dirname") {
+        if let Some(start) = result.find("$(dirname") {
+            // Find matching closing paren
+            let mut depth = 0;
+            let mut end = start;
+            for (i, c) in result[start..].char_indices() {
+                match c {
+                    '(' => depth += 1,
+                    ')' => {
+                        depth -= 1;
+                        if depth == 0 {
+                            end = start + i;
+                            break;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            if end > start {
+                result = format!("{}{}{}", &result[..start], vm_dir_str, &result[end + 1..]);
+            } else {
+                break;
+            }
+        } else {
+            break;
+        }
+    }
+
+    // Expand ${VAR} format
+    for (name, value) in vars {
+        result = result.replace(&format!("${{{}}}", name), value);
+    }
+
+    // Expand $VAR format (must be done after ${VAR} to avoid partial matches)
+    for (name, value) in vars {
+        result = result.replace(&format!("${}", name), value);
+    }
+
+    // Handle $HOME
+    if result.contains("$HOME") || result.contains("${HOME}") {
+        if let Some(home) = dirs::home_dir() {
+            let home_str = home.to_string_lossy();
+            result = result.replace("${HOME}", &home_str);
+            result = result.replace("$HOME", &home_str);
+        }
+    }
+
+    result
+}
+
 /// Extract disk configurations
 fn extract_disks(content: &str, vm_dir: &Path) -> Vec<DiskConfig> {
     let mut disks = Vec::new();
+
+    // First, parse all variable assignments
+    let vars = extract_shell_variables(content, vm_dir);
 
     for line in content.lines() {
         if line.trim_start().starts_with('#') {
@@ -242,7 +381,8 @@ fn extract_disks(content: &str, vm_dir: &Path) -> Vec<DiskConfig> {
             if let Some(idx) = line.find(&pattern) {
                 let rest = &line[idx + pattern.len()..];
                 if let Some(path) = extract_path_from_arg(rest) {
-                    let full_path = resolve_path(&path, vm_dir);
+                    let expanded = expand_variables(&path, &vars, vm_dir);
+                    let full_path = resolve_path(&expanded, vm_dir);
                     let format = guess_disk_format(&full_path);
                     disks.push(DiskConfig {
                         path: full_path,
@@ -256,7 +396,8 @@ fn extract_disks(content: &str, vm_dir: &Path) -> Vec<DiskConfig> {
         // Look for -drive file=
         if line.contains("-drive") && line.contains("file=") {
             if let Some(path) = extract_drive_file(line) {
-                let full_path = resolve_path(&path, vm_dir);
+                let expanded = expand_variables(&path, &vars, vm_dir);
+                let full_path = resolve_path(&expanded, vm_dir);
                 let format = guess_disk_format(&full_path);
                 let interface = if line.contains("if=virtio") {
                     "virtio"
@@ -334,8 +475,22 @@ fn resolve_path(path: &str, vm_dir: &Path) -> PathBuf {
     }
 }
 
-/// Guess disk format from file extension
+/// Detect disk format using qemu-img info, falling back to extension-based guessing
 fn guess_disk_format(path: &PathBuf) -> DiskFormat {
+    // First, try to detect the actual format using qemu-img info
+    if path.exists() {
+        if let Some(format_str) = qemu_img::detect_disk_format(path) {
+            return match format_str.to_lowercase().as_str() {
+                "qcow2" => DiskFormat::Qcow2,
+                "raw" => DiskFormat::Raw,
+                "vmdk" => DiskFormat::Vmdk,
+                "vdi" => DiskFormat::Vdi,
+                other => DiskFormat::Other(other.to_string()),
+            };
+        }
+    }
+
+    // Fall back to extension-based detection if qemu-img fails or file doesn't exist
     path.extension()
         .and_then(|ext| ext.to_str())
         .map(DiskFormat::from_extension)
