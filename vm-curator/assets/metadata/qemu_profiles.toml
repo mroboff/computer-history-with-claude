@@ -943,50 +943,6 @@ display = "gtk"
 extra_args = []
 iso_url = "https://nixos.org/download.html"
 
-[nix-os]
-display_name = "NixOS"
-category = "linux"
-emulator = "qemu-system-x86_64"
-memory_mb = 4096
-cpu_cores = 2
-cpu_model = "host"
-machine = "q35"
-vga = "virtio"
-audio = ["intel-hda", "hda-duplex"]
-network_model = "virtio"
-disk_interface = "virtio"
-disk_size_gb = 40
-enable_kvm = true
-uefi = false
-tpm = false
-rtc_localtime = false
-usb_tablet = true
-display = "gtk"
-extra_args = []
-iso_url = "https://nixos.org/download.html"
-
-[linux-nix-os]
-display_name = "NixOS"
-category = "linux"
-emulator = "qemu-system-x86_64"
-memory_mb = 4096
-cpu_cores = 2
-cpu_model = "host"
-machine = "q35"
-vga = "virtio"
-audio = ["intel-hda", "hda-duplex"]
-network_model = "virtio"
-disk_interface = "virtio"
-disk_size_gb = 40
-enable_kvm = true
-uefi = false
-tpm = false
-rtc_localtime = false
-usb_tablet = true
-display = "gtk"
-extra_args = []
-iso_url = "https://nixos.org/download.html"
-
 [linux-slackware]
 display_name = "Slackware Linux"
 category = "linux"
@@ -1924,34 +1880,13 @@ extra_args = []
 notes = "Last 'Classic' Mac OS. QEMU support limited. Use SheepShaver for better results."
 
 # =============================================================================
-# Mac OS X - PowerPC (ppc)
+# Mac OS X / macOS - All versions
+# Note: Running macOS in QEMU may violate Apple's EULA unless on Apple hardware
 # =============================================================================
 
-[mac-osx-panther]
-display_name = "Mac OS X Panther"
-category = "classic-mac"
-emulator = "qemu-system-ppc"
-memory_mb = 512
-cpu_cores = 1
-cpu_model = "g4"
-machine = "mac99"
-vga = "none"
-audio = []
-network_model = "none"
-disk_interface = "ide"
-disk_size_gb = 8
-enable_kvm = false
-uefi = false
-tpm = false
-rtc_localtime = false
-usb_tablet = false
-display = "gtk"
-extra_args = []
-notes = "PowerPC Mac OS X. QEMU support very limited."
-
 [mac-osx-jaguar]
-display_name = "Mac OS X Jaguar"
-category = "classic-mac"
+display_name = "Mac OS X 10.2 Jaguar"
+category = "macos"
 emulator = "qemu-system-ppc"
 memory_mb = 512
 cpu_cores = 1
@@ -1969,11 +1904,33 @@ rtc_localtime = false
 usb_tablet = false
 display = "gtk"
 extra_args = []
-notes = "PowerPC Mac OS X. QEMU support very limited."
+notes = "PowerPC only. QEMU PPC support is limited."
+
+[mac-osx-panther]
+display_name = "Mac OS X 10.3 Panther"
+category = "macos"
+emulator = "qemu-system-ppc"
+memory_mb = 512
+cpu_cores = 1
+cpu_model = "g4"
+machine = "mac99"
+vga = "none"
+audio = []
+network_model = "none"
+disk_interface = "ide"
+disk_size_gb = 8
+enable_kvm = false
+uefi = false
+tpm = false
+rtc_localtime = false
+usb_tablet = false
+display = "gtk"
+extra_args = []
+notes = "PowerPC only. QEMU PPC support is limited."
 
 [mac-osx-tiger]
-display_name = "Mac OS X Tiger"
-category = "classic-mac"
+display_name = "Mac OS X 10.4 Tiger"
+category = "macos"
 emulator = "qemu-system-ppc"
 memory_mb = 512
 cpu_cores = 1
@@ -1991,15 +1948,10 @@ rtc_localtime = false
 usb_tablet = false
 display = "gtk"
 extra_args = []
-notes = "PowerPC Mac OS X. QEMU support very limited. Last PPC release."
-
-# =============================================================================
-# Mac OS X / macOS - Intel (x86_64)
-# Note: Running macOS in QEMU may violate Apple's EULA unless on Apple hardware
-# =============================================================================
+notes = "PowerPC only. Last PPC release. QEMU support limited."
 
 [mac-osx-leopard]
-display_name = "Mac OS X Leopard"
+display_name = "Mac OS X 10.5 Leopard (Intel)"
 category = "macos"
 emulator = "qemu-system-x86_64"
 memory_mb = 2048
@@ -2021,7 +1973,7 @@ extra_args = []
 notes = "macOS virtualization may require Apple hardware per EULA."
 
 [mac-osx-snow-leopard]
-display_name = "Mac OS X Snow Leopard"
+display_name = "Mac OS X 10.6 Snow Leopard"
 category = "macos"
 emulator = "qemu-system-x86_64"
 memory_mb = 2048
@@ -2043,7 +1995,7 @@ extra_args = []
 notes = "macOS virtualization may require Apple hardware per EULA."
 
 [mac-osx-lion]
-display_name = "Mac OS X Lion"
+display_name = "Mac OS X 10.7 Lion"
 category = "macos"
 emulator = "qemu-system-x86_64"
 memory_mb = 4096
@@ -2064,7 +2016,7 @@ display = "gtk"
 extra_args = []
 
 [mac-osx-mountain-lion]
-display_name = "OS X Mountain Lion"
+display_name = "OS X 10.8 Mountain Lion"
 category = "macos"
 emulator = "qemu-system-x86_64"
 memory_mb = 4096
@@ -2085,7 +2037,7 @@ display = "gtk"
 extra_args = []
 
 [macos-sierra]
-display_name = "macOS Sierra"
+display_name = "macOS 10.12 Sierra"
 category = "macos"
 emulator = "qemu-system-x86_64"
 memory_mb = 4096
@@ -2106,7 +2058,7 @@ display = "gtk"
 extra_args = []
 
 [macos-high-sierra]
-display_name = "macOS High Sierra"
+display_name = "macOS 10.13 High Sierra"
 category = "macos"
 emulator = "qemu-system-x86_64"
 memory_mb = 4096
@@ -2127,7 +2079,7 @@ display = "gtk"
 extra_args = []
 
 [macos-mojave]
-display_name = "macOS Mojave"
+display_name = "macOS 10.14 Mojave"
 category = "macos"
 emulator = "qemu-system-x86_64"
 memory_mb = 4096
@@ -2148,7 +2100,7 @@ display = "gtk"
 extra_args = []
 
 [macos-catalina]
-display_name = "macOS Catalina"
+display_name = "macOS 10.15 Catalina"
 category = "macos"
 emulator = "qemu-system-x86_64"
 memory_mb = 4096
@@ -2169,7 +2121,7 @@ display = "gtk"
 extra_args = []
 
 [macos-big-sur]
-display_name = "macOS Big Sur"
+display_name = "macOS 11 Big Sur"
 category = "macos"
 emulator = "qemu-system-x86_64"
 memory_mb = 8192
@@ -2190,7 +2142,7 @@ display = "gtk"
 extra_args = []
 
 [macos-monterey]
-display_name = "macOS Monterey"
+display_name = "macOS 12 Monterey"
 category = "macos"
 emulator = "qemu-system-x86_64"
 memory_mb = 8192
@@ -2211,7 +2163,7 @@ display = "gtk"
 extra_args = []
 
 [macos-ventura]
-display_name = "macOS Ventura"
+display_name = "macOS 13 Ventura"
 category = "macos"
 emulator = "qemu-system-x86_64"
 memory_mb = 8192
@@ -2232,7 +2184,7 @@ display = "gtk"
 extra_args = []
 
 [macos-sonoma]
-display_name = "macOS Sonoma"
+display_name = "macOS 14 Sonoma"
 category = "macos"
 emulator = "qemu-system-x86_64"
 memory_mb = 8192

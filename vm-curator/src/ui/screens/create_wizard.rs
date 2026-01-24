@@ -859,6 +859,58 @@ fn handle_step_configure_disk(app: &mut App, key: KeyEvent) -> Result<()> {
 // Step 4: Configure QEMU
 // =============================================================================
 
+/// QEMU field options for cycling through values
+const VGA_OPTIONS: &[&str] = &["std", "virtio", "qxl", "cirrus", "vmware", "none"];
+const NETWORK_OPTIONS: &[&str] = &["virtio", "e1000", "rtl8139", "ne2k_pci", "pcnet", "none"];
+const DISK_INTERFACE_OPTIONS: &[&str] = &["virtio", "ide", "sata", "scsi"];
+const DISPLAY_OPTIONS: &[&str] = &["gtk", "sdl", "spice", "vnc"];
+const AUDIO_OPTIONS: &[(&str, &[&str])] = &[
+    ("Intel HDA", &["intel-hda", "hda-duplex"]),
+    ("AC97", &["ac97"]),
+    ("Sound Blaster 16", &["sb16"]),
+    ("None", &[]),
+];
+
+/// Fields in the QEMU config screen
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum QemuField {
+    Memory,
+    CpuCores,
+    Vga,
+    Audio,
+    Network,
+    DiskInterface,
+    Display,
+    Kvm,
+    Uefi,
+    Tpm,
+    UsbTablet,
+    RtcLocal,
+}
+
+impl QemuField {
+    fn from_index(idx: usize) -> Self {
+        match idx {
+            0 => Self::Memory,
+            1 => Self::CpuCores,
+            2 => Self::Vga,
+            3 => Self::Audio,
+            4 => Self::Network,
+            5 => Self::DiskInterface,
+            6 => Self::Display,
+            7 => Self::Kvm,
+            8 => Self::Uefi,
+            9 => Self::Tpm,
+            10 => Self::UsbTablet,
+            _ => Self::RtcLocal,
+        }
+    }
+
+    fn count() -> usize {
+        12
+    }
+}
+
 fn render_step_configure_qemu(app: &App, frame: &mut Frame, area: Rect) {
     let state = app.wizard_state.as_ref().unwrap();
 
@@ -871,114 +923,366 @@ fn render_step_configure_qemu(app: &App, frame: &mut Frame, area: Rect) {
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
-    let chunks = Layout::default()
+    // Split into left (settings) and right (notes) panels
+    let h_chunks = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Percentage(55), Constraint::Percentage(45)])
+        .split(inner);
+
+    let left_chunks = Layout::default()
         .direction(Direction::Vertical)
         .margin(1)
         .constraints([
             Constraint::Length(1),   // Header
-            Constraint::Length(1),   // Spacer
-            Constraint::Min(20),     // Settings
+            Constraint::Min(18),     // Settings
             Constraint::Length(2),   // Help
         ])
-        .split(inner);
+        .split(h_chunks[0]);
 
-    // Header
-    let header = Paragraph::new("QEMU Configuration")
+    let right_chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .margin(1)
+        .constraints([
+            Constraint::Length(1),   // Header
+            Constraint::Min(18),     // Notes
+        ])
+        .split(h_chunks[1]);
+
+    // Left side: Settings header
+    let header = Paragraph::new("QEMU Settings")
         .style(Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD));
-    frame.render_widget(header, chunks[0]);
+    frame.render_widget(header, left_chunks[0]);
 
-    // Settings display
+    // Settings list (editable)
     let config = &state.qemu_config;
+    let focus = state.field_focus;
+    let editing = state.editing_field.is_some();
     let mut lines = Vec::new();
 
-    lines.push(Line::from(vec![
-        Span::styled("Memory: ", Style::default().fg(Color::Yellow)),
-        Span::raw(format!("{} MB", config.memory_mb)),
-    ]));
+    // Memory (editable)
+    let mem_selected = focus == 0;
+    let mem_editing = matches!(state.editing_field, Some(WizardField::MemoryMb));
+    lines.push(render_field_line(
+        "Memory:",
+        &format!("{} MB", config.memory_mb),
+        mem_selected,
+        mem_editing,
+        "[←/→] ±256MB",
+    ));
 
-    lines.push(Line::from(vec![
-        Span::styled("CPU Cores: ", Style::default().fg(Color::Yellow)),
-        Span::raw(format!("{}", config.cpu_cores)),
-    ]));
+    // CPU Cores (editable)
+    let cpu_selected = focus == 1;
+    let cpu_editing = matches!(state.editing_field, Some(WizardField::CpuCores));
+    lines.push(render_field_line(
+        "CPU Cores:",
+        &format!("{}", config.cpu_cores),
+        cpu_selected,
+        cpu_editing,
+        "[←/→] ±1",
+    ));
 
-    lines.push(Line::from(vec![
-        Span::styled("CPU Model: ", Style::default().fg(Color::Yellow)),
-        Span::raw(config.cpu_model.as_deref().unwrap_or("default")),
-    ]));
+    // VGA (cycle)
+    let vga_selected = focus == 2;
+    lines.push(render_field_line(
+        "Graphics:",
+        &config.vga,
+        vga_selected,
+        false,
+        "[←/→] cycle",
+    ));
 
-    lines.push(Line::from(vec![
-        Span::styled("Machine: ", Style::default().fg(Color::Yellow)),
-        Span::raw(config.machine.as_deref().unwrap_or("default")),
-    ]));
+    // Audio (cycle)
+    let audio_selected = focus == 3;
+    let audio_label = get_audio_label(&config.audio);
+    lines.push(render_field_line(
+        "Audio:",
+        audio_label,
+        audio_selected,
+        false,
+        "[←/→] cycle",
+    ));
+
+    // Network (cycle)
+    let net_selected = focus == 4;
+    lines.push(render_field_line(
+        "Network:",
+        &config.network_model,
+        net_selected,
+        false,
+        "[←/→] cycle",
+    ));
+
+    // Disk Interface (cycle)
+    let disk_selected = focus == 5;
+    lines.push(render_field_line(
+        "Disk I/F:",
+        &config.disk_interface,
+        disk_selected,
+        false,
+        "[←/→] cycle",
+    ));
+
+    // Display (cycle)
+    let disp_selected = focus == 6;
+    lines.push(render_field_line(
+        "Display:",
+        &config.display,
+        disp_selected,
+        false,
+        "[←/→] cycle",
+    ));
 
     lines.push(Line::from(""));
+    lines.push(Line::styled("  Features (toggle with Space):", Style::default().fg(Color::DarkGray)));
 
-    lines.push(Line::from(vec![
-        Span::styled("VGA: ", Style::default().fg(Color::Yellow)),
-        Span::raw(&config.vga),
-    ]));
+    // KVM toggle
+    let kvm_selected = focus == 7;
+    lines.push(render_toggle_line("KVM Accel:", config.enable_kvm, kvm_selected));
 
-    lines.push(Line::from(vec![
-        Span::styled("Display: ", Style::default().fg(Color::Yellow)),
-        Span::raw(&config.display),
-    ]));
+    // UEFI toggle
+    let uefi_selected = focus == 8;
+    lines.push(render_toggle_line("UEFI Boot:", config.uefi, uefi_selected));
 
-    let audio_str = config.audio.join(", ");
-    lines.push(Line::from(vec![
-        Span::styled("Audio: ", Style::default().fg(Color::Yellow)),
-        Span::raw(if audio_str.is_empty() { "None" } else { &audio_str }),
-    ]));
+    // TPM toggle
+    let tpm_selected = focus == 9;
+    lines.push(render_toggle_line("TPM 2.0:", config.tpm, tpm_selected));
 
-    lines.push(Line::from(""));
+    // USB Tablet toggle
+    let usb_selected = focus == 10;
+    lines.push(render_toggle_line("USB Tablet:", config.usb_tablet, usb_selected));
 
-    lines.push(Line::from(vec![
-        Span::styled("Disk Interface: ", Style::default().fg(Color::Yellow)),
-        Span::raw(&config.disk_interface),
-    ]));
+    // RTC Local toggle
+    let rtc_selected = focus == 11;
+    lines.push(render_toggle_line("RTC Local:", config.rtc_localtime, rtc_selected));
 
-    lines.push(Line::from(vec![
-        Span::styled("Network: ", Style::default().fg(Color::Yellow)),
-        Span::raw(&config.network_model),
-    ]));
+    let settings = Paragraph::new(lines);
+    frame.render_widget(settings, left_chunks[1]);
 
-    lines.push(Line::from(""));
-
-    // Toggles
-    let features: Vec<&str> = [
-        ("KVM", config.enable_kvm),
-        ("UEFI", config.uefi),
-        ("TPM", config.tpm),
-        ("USB Tablet", config.usb_tablet),
-        ("RTC Local", config.rtc_localtime),
-    ]
-    .iter()
-    .filter(|(_, enabled)| *enabled)
-    .map(|(name, _)| *name)
-    .collect();
-
-    lines.push(Line::from(vec![
-        Span::styled("Features: ", Style::default().fg(Color::Yellow)),
-        Span::raw(features.join(", ")),
-    ]));
-
-    let settings = Paragraph::new(lines)
-        .wrap(Wrap { trim: false });
-    frame.render_widget(settings, chunks[2]);
-
-    // Help
-    let help = Paragraph::new("[r] Reset to defaults  [Enter] Next  [Esc] Back")
+    // Help text
+    let help_text = if editing {
+        "[Enter] Done  [←/→] Adjust"
+    } else {
+        "[j/k] Navigate  [←/→] Change  [Space] Toggle  [r] Reset  [Enter] Next"
+    };
+    let help = Paragraph::new(help_text)
         .style(Style::default().fg(Color::DarkGray))
         .alignment(Alignment::Center);
-    frame.render_widget(help, chunks[3]);
+    frame.render_widget(help, left_chunks[2]);
+
+    // Right side: Notes header
+    let notes_header = Paragraph::new("Why These Defaults?")
+        .style(Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD));
+    frame.render_widget(notes_header, right_chunks[0]);
+
+    // Right side: Explanation notes
+    let notes_block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(Color::DarkGray));
+
+    let notes_inner = notes_block.inner(right_chunks[1]);
+    frame.render_widget(notes_block, right_chunks[1]);
+
+    // Build notes based on selected field and profile
+    let notes_text = get_field_notes(app, focus);
+    let notes = Paragraph::new(notes_text)
+        .style(Style::default().fg(Color::Gray))
+        .wrap(Wrap { trim: false });
+    frame.render_widget(notes, notes_inner);
+}
+
+fn render_field_line(label: &str, value: &str, selected: bool, editing: bool, hint: &str) -> Line<'static> {
+    let prefix = if selected { "> " } else { "  " };
+    let label_style = Style::default().fg(Color::Yellow);
+    let value_style = if editing {
+        Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
+    } else if selected {
+        Style::default().fg(Color::White).add_modifier(Modifier::BOLD)
+    } else {
+        Style::default().fg(Color::White)
+    };
+    let hint_style = Style::default().fg(Color::DarkGray);
+
+    Line::from(vec![
+        Span::styled(prefix.to_string(), if selected { Style::default().fg(Color::Yellow) } else { Style::default() }),
+        Span::styled(format!("{:12}", label), label_style),
+        Span::styled(format!("{:15}", value), value_style),
+        Span::styled(if selected { hint.to_string() } else { String::new() }, hint_style),
+    ])
+}
+
+fn render_toggle_line(label: &str, enabled: bool, selected: bool) -> Line<'static> {
+    let prefix = if selected { "> " } else { "  " };
+    let checkbox = if enabled { "[x]" } else { "[ ]" };
+    let label_style = Style::default().fg(Color::Yellow);
+    let value_style = if selected {
+        Style::default().fg(if enabled { Color::Green } else { Color::Red }).add_modifier(Modifier::BOLD)
+    } else {
+        Style::default().fg(if enabled { Color::Green } else { Color::DarkGray })
+    };
+
+    Line::from(vec![
+        Span::styled(prefix.to_string(), if selected { Style::default().fg(Color::Yellow) } else { Style::default() }),
+        Span::styled(format!("{:12}", label), label_style),
+        Span::styled(checkbox.to_string(), value_style),
+    ])
+}
+
+fn get_audio_label(audio: &[String]) -> &'static str {
+    if audio.is_empty() {
+        "None"
+    } else if audio.iter().any(|a| a.contains("intel-hda")) {
+        "Intel HDA"
+    } else if audio.iter().any(|a| a.contains("ac97")) {
+        "AC97"
+    } else if audio.iter().any(|a| a.contains("sb16")) {
+        "Sound Blaster 16"
+    } else {
+        "Custom"
+    }
+}
+
+fn get_field_notes(app: &App, focus: usize) -> String {
+    let profile = app.wizard_selected_profile();
+    let profile_notes = profile.and_then(|p| p.notes.as_ref()).cloned().unwrap_or_default();
+    let os_name = profile.map(|p| p.display_name.as_str()).unwrap_or("this OS");
+
+    let field = QemuField::from_index(focus);
+
+    let explanation = match field {
+        QemuField::Memory => format!(
+            "RAM for {}.\n\n\
+            Modern OSes need 4GB+. Older systems may crash with too much RAM.\n\n\
+            Windows 95: max 480MB\n\
+            Windows 98/ME: max 512MB\n\
+            Windows XP: 512MB-1GB\n\
+            Linux GUI: 2GB minimum",
+            os_name
+        ),
+        QemuField::CpuCores => format!(
+            "CPU cores for {}.\n\n\
+            More cores = faster for multi-threaded tasks.\n\n\
+            Old OSes (pre-2000) may not support multiple CPUs.\n\
+            Don't exceed your host's core count.",
+            os_name
+        ),
+        QemuField::Vga => format!(
+            "Graphics adapter for {}.\n\n\
+            std: Safe, universal\n\
+            virtio: Best Linux perf\n\
+            qxl: Best for Windows/Spice\n\
+            cirrus: Old OS compat\n\
+            vmware: macOS guest\n\
+            none: Headless server",
+            os_name
+        ),
+        QemuField::Audio => format!(
+            "Audio device for {}.\n\n\
+            Intel HDA: Modern (Win Vista+)\n\
+            AC97: Win 2000/XP era\n\
+            SB16: DOS/Win 9x games\n\
+            None: Server/headless",
+            os_name
+        ),
+        QemuField::Network => format!(
+            "Network adapter for {}.\n\n\
+            virtio: Best perf (needs driver)\n\
+            e1000: Wide compat (Intel)\n\
+            rtl8139: Win XP built-in\n\
+            ne2k_pci: DOS/old Linux\n\
+            pcnet: BSD compatible",
+            os_name
+        ),
+        QemuField::DiskInterface => format!(
+            "Disk interface for {}.\n\n\
+            virtio: Best perf (needs driver)\n\
+            ide: Universal compat\n\
+            sata: Modern systems\n\
+            scsi: Server workloads",
+            os_name
+        ),
+        QemuField::Display => format!(
+            "Display output for {}.\n\n\
+            gtk: Native Linux window\n\
+            sdl: Cross-platform\n\
+            spice: Remote + features\n\
+            vnc: Remote access only",
+            os_name
+        ),
+        QemuField::Kvm => "KVM hardware acceleration.\n\n\
+            Enables near-native speed using CPU virtualization.\n\n\
+            Requires: Linux host with Intel VT-x or AMD-V.\n\
+            Disable for: Non-x86 guests, nested virt issues.".to_string(),
+        QemuField::Uefi => format!(
+            "UEFI boot mode for {}.\n\n\
+            Modern boot firmware (vs legacy BIOS).\n\n\
+            Required: Windows 11, some Linux installs\n\
+            Optional: Windows 8+, modern Linux\n\
+            Incompatible: DOS, Win 9x, old systems",
+            os_name
+        ),
+        QemuField::Tpm => "TPM 2.0 emulation.\n\n\
+            Trusted Platform Module for security features.\n\n\
+            Required: Windows 11\n\
+            Optional: BitLocker, Secure Boot\n\
+            Not needed: Most other OSes".to_string(),
+        QemuField::UsbTablet => "USB tablet device.\n\n\
+            Provides seamless mouse integration (no capture).\n\n\
+            Recommended: Most modern systems\n\
+            Disable: Old OSes with USB issues".to_string(),
+        QemuField::RtcLocal => "RTC in local time.\n\n\
+            Sets hardware clock to local timezone.\n\n\
+            Enable: Windows (expects local time)\n\
+            Disable: Linux/Unix (expects UTC)".to_string(),
+    };
+
+    if profile_notes.is_empty() {
+        explanation
+    } else {
+        format!("{}\n\n---\nProfile note:\n{}", explanation, profile_notes)
+    }
 }
 
 fn handle_step_configure_qemu(app: &mut App, key: KeyEvent) -> Result<()> {
+    let field_count = QemuField::count();
+
     match key.code {
         KeyCode::Esc => {
             app.wizard_prev_step();
         }
         KeyCode::Enter => {
             let _ = app.wizard_next_step();
+        }
+        KeyCode::Char('j') | KeyCode::Down => {
+            if let Some(ref mut state) = app.wizard_state {
+                if state.field_focus < field_count - 1 {
+                    state.field_focus += 1;
+                }
+            }
+        }
+        KeyCode::Char('k') | KeyCode::Up => {
+            if let Some(ref mut state) = app.wizard_state {
+                if state.field_focus > 0 {
+                    state.field_focus -= 1;
+                }
+            }
+        }
+        KeyCode::Left | KeyCode::Right => {
+            let delta = if key.code == KeyCode::Right { 1i32 } else { -1i32 };
+            handle_qemu_field_change(app, delta);
+        }
+        KeyCode::Char(' ') => {
+            // Toggle for boolean fields
+            if let Some(ref mut state) = app.wizard_state {
+                let field = QemuField::from_index(state.field_focus);
+                match field {
+                    QemuField::Kvm => state.qemu_config.enable_kvm = !state.qemu_config.enable_kvm,
+                    QemuField::Uefi => state.qemu_config.uefi = !state.qemu_config.uefi,
+                    QemuField::Tpm => state.qemu_config.tpm = !state.qemu_config.tpm,
+                    QemuField::UsbTablet => state.qemu_config.usb_tablet = !state.qemu_config.usb_tablet,
+                    QemuField::RtcLocal => state.qemu_config.rtc_localtime = !state.qemu_config.rtc_localtime,
+                    _ => {}
+                }
+            }
         }
         KeyCode::Char('r') | KeyCode::Char('R') => {
             // Reset to profile defaults
@@ -991,6 +1295,63 @@ fn handle_step_configure_qemu(app: &mut App, key: KeyEvent) -> Result<()> {
         _ => {}
     }
     Ok(())
+}
+
+fn handle_qemu_field_change(app: &mut App, delta: i32) {
+    let Some(ref mut state) = app.wizard_state else { return };
+    let field = QemuField::from_index(state.field_focus);
+
+    match field {
+        QemuField::Memory => {
+            let change = 256 * delta;
+            let new_val = (state.qemu_config.memory_mb as i32 + change).max(128).min(65536);
+            state.qemu_config.memory_mb = new_val as u32;
+        }
+        QemuField::CpuCores => {
+            let new_val = (state.qemu_config.cpu_cores as i32 + delta).max(1).min(64);
+            state.qemu_config.cpu_cores = new_val as u32;
+        }
+        QemuField::Vga => {
+            cycle_option(&mut state.qemu_config.vga, VGA_OPTIONS, delta);
+        }
+        QemuField::Audio => {
+            cycle_audio(&mut state.qemu_config.audio, delta);
+        }
+        QemuField::Network => {
+            cycle_option(&mut state.qemu_config.network_model, NETWORK_OPTIONS, delta);
+        }
+        QemuField::DiskInterface => {
+            cycle_option(&mut state.qemu_config.disk_interface, DISK_INTERFACE_OPTIONS, delta);
+        }
+        QemuField::Display => {
+            cycle_option(&mut state.qemu_config.display, DISPLAY_OPTIONS, delta);
+        }
+        // Toggles use space, not left/right
+        _ => {}
+    }
+}
+
+fn cycle_option(current: &mut String, options: &[&str], delta: i32) {
+    let current_idx = options.iter().position(|&o| o == current.as_str()).unwrap_or(0);
+    let new_idx = (current_idx as i32 + delta).rem_euclid(options.len() as i32) as usize;
+    *current = options[new_idx].to_string();
+}
+
+fn cycle_audio(current: &mut Vec<String>, delta: i32) {
+    // Find current audio preset
+    let current_idx = AUDIO_OPTIONS.iter().position(|(_, devices)| {
+        if devices.is_empty() && current.is_empty() {
+            true
+        } else if !devices.is_empty() && !current.is_empty() {
+            current.iter().any(|c| devices.iter().any(|d| c.contains(d)))
+        } else {
+            false
+        }
+    }).unwrap_or(0);
+
+    let new_idx = (current_idx as i32 + delta).rem_euclid(AUDIO_OPTIONS.len() as i32) as usize;
+    let (_, devices) = AUDIO_OPTIONS[new_idx];
+    *current = devices.iter().map(|&s| s.to_string()).collect();
 }
 
 // =============================================================================
