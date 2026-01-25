@@ -275,7 +275,7 @@ This is a **personal passion project** that I am sharing with the community. Whi
 If you'd like to say thanks, you can support the project below. **Donations are a "thank you" for existing work, not a payment for future support.**
 
 * **[GitHub Sponsors](https://github.com/sponsors/mroboff):** Best for one-time contributions (Goes to the RTX-Pro 6000 fund!)
-* **[Ko-fi](https://ko-fi.com/YOUR_USERNAME):** Buy me a coffee (or a generic energy drink).
+* **[Ko-fi](https://ko-fi.com/mroboff):** Buy me a coffee (or a generic energy drink).
 
 ### License
 
