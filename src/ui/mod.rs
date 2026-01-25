@@ -9,7 +9,7 @@ use std::io::Stdout;
 use std::time::Duration;
 
 use crate::app::{App, BackgroundResult, ConfirmAction, InputMode, Screen, TextInputContext};
-use crate::vm::{launch_vm_sync, lifecycle::is_vm_running, BootMode};
+use crate::vm::{launch_vm_with_error_check, lifecycle::is_vm_running, BootMode};
 use std::thread;
 
 /// Run the TUI application
@@ -179,19 +179,28 @@ fn handle_confirm_click(app: &mut App, action: ConfirmAction, click_x: u16, clic
 fn execute_confirm_action(app: &mut App, action: ConfirmAction) -> Result<()> {
     match action {
         ConfirmAction::LaunchVm => {
+            // Pop the confirm dialog first
+            app.pop_screen();
+
             if let Some(vm) = app.selected_vm().cloned() {
                 if is_vm_running(&vm) {
                     app.set_status(format!("{} is already running", vm.display_name()));
                 } else {
                     let options = app.get_launch_options();
-                    if let Err(e) = launch_vm_sync(&vm, &options) {
-                        app.set_status(format!("Error: {}", e));
+                    let result = launch_vm_with_error_check(&vm, &options);
+
+                    if result.success {
+                        app.set_status(format!("Launched: {}", result.vm_name));
                     } else {
-                        app.set_status(format!("Launched: {}", vm.display_name()));
+                        // Show error in the error dialog for better visibility
+                        let error_msg = result.error.unwrap_or_else(|| "Unknown error".to_string());
+                        app.show_error(format!(
+                            "Failed to launch {}\n\n{}",
+                            result.vm_name, error_msg
+                        ));
                     }
                 }
             }
-            app.pop_screen();
         }
         ConfirmAction::ResetVm => {
             if let Some(vm) = app.selected_vm() {
@@ -352,6 +361,24 @@ fn render(app: &App, frame: &mut Frame) {
             render_dim_overlay(frame);
             render_error_dialog(app, frame);
         }
+        Screen::CreateWizard => {
+            screens::main_menu::render(app, frame);
+            render_dim_overlay(frame);
+            screens::create_wizard::render(app, frame);
+        }
+        Screen::CreateWizardCustomOs => {
+            screens::main_menu::render(app, frame);
+            render_dim_overlay(frame);
+            screens::create_wizard::render_custom_os(app, frame);
+        }
+        Screen::CreateWizardDownload => {
+            screens::main_menu::render(app, frame);
+            render_dim_overlay(frame);
+            screens::create_wizard::render_download(app, frame);
+        }
+        Screen::Settings => {
+            screens::settings::render(app, frame);
+        }
     }
 }
 
@@ -365,7 +392,7 @@ fn handle_key(app: &mut App, key: KeyEvent) -> Result<()> {
 
     // Global quit with q/Q (except in text input modes where q might be typed)
     if (key.code == KeyCode::Char('q') || key.code == KeyCode::Char('Q'))
-        && !matches!(app.screen, Screen::Search | Screen::TextInput(_))
+        && !matches!(app.screen, Screen::Search | Screen::TextInput(_) | Screen::RawScript | Screen::CreateWizard | Screen::CreateWizardCustomOs)
     {
         app.should_quit = true;
         return Ok(());
@@ -386,6 +413,10 @@ fn handle_key(app: &mut App, key: KeyEvent) -> Result<()> {
         Screen::FileBrowser => handle_file_browser(app, key)?,
         Screen::TextInput(context) => handle_text_input(app, context.clone(), key)?,
         Screen::ErrorDialog => handle_error_dialog(app, key)?,
+        Screen::CreateWizard => screens::create_wizard::handle_key(app, key)?,
+        Screen::CreateWizardCustomOs => screens::create_wizard::handle_custom_os_key(app, key)?,
+        Screen::CreateWizardDownload => screens::create_wizard::handle_download_key(app, key)?,
+        Screen::Settings => { screens::settings::handle_input(app, key)?; }
     }
 
     Ok(())
@@ -403,7 +434,12 @@ fn handle_main_menu(app: &mut App, key: KeyEvent) -> Result<()> {
         }
         KeyCode::Enter => {
             if app.selected_vm().is_some() {
-                app.push_screen(Screen::Confirm(ConfirmAction::LaunchVm));
+                if app.config.confirm_before_launch {
+                    app.push_screen(Screen::Confirm(ConfirmAction::LaunchVm));
+                } else {
+                    // Launch directly without confirmation
+                    execute_confirm_action(app, ConfirmAction::LaunchVm)?;
+                }
             }
         }
         KeyCode::Char('m') | KeyCode::Char('M') => {
@@ -416,6 +452,12 @@ fn handle_main_menu(app: &mut App, key: KeyEvent) -> Result<()> {
             app.push_screen(Screen::Search);
         }
         KeyCode::Char('?') => app.push_screen(Screen::Help),
+        KeyCode::Char('c') | KeyCode::Char('C') => {
+            app.start_create_wizard();
+        }
+        KeyCode::Char('s') | KeyCode::Char('S') => {
+            app.push_screen(Screen::Settings);
+        }
         _ => {}
     }
     Ok(())
@@ -1155,11 +1197,23 @@ fn handle_file_browser(app: &mut App, key: KeyEvent) -> Result<()> {
         KeyCode::Char('k') | KeyCode::Up => app.file_browser_prev(),
         KeyCode::Enter => {
             if let Some(iso_path) = app.file_browser_enter() {
-                // Selected an ISO file
-                app.boot_mode = BootMode::Cdrom(iso_path);
-                app.pop_screen(); // Close file browser
-                app.pop_screen(); // Close boot options
-                app.push_screen(Screen::Confirm(ConfirmAction::LaunchVm));
+                // Check if we're in wizard mode
+                if app.wizard_state.is_some() {
+                    // Set the ISO path in wizard state
+                    if let Some(ref mut state) = app.wizard_state {
+                        state.iso_path = Some(iso_path);
+                    }
+                    app.pop_screen(); // Close file browser
+
+                    // Proceed to next step
+                    let _ = app.wizard_next_step();
+                } else {
+                    // Normal boot mode - selected an ISO file
+                    app.boot_mode = BootMode::Cdrom(iso_path);
+                    app.pop_screen(); // Close file browser
+                    app.pop_screen(); // Close boot options
+                    app.push_screen(Screen::Confirm(ConfirmAction::LaunchVm));
+                }
             }
             // If it was a directory, file_browser_enter already navigated
         }
@@ -1251,23 +1305,29 @@ fn render_error_dialog(app: &App, frame: &mut Frame) {
     use ratatui::widgets::{Block, Borders, Clear, Paragraph, Wrap};
 
     let area = frame.area();
-    let dialog_width = 70.min(area.width.saturating_sub(4));
-    let dialog_height = 15.min(area.height.saturating_sub(4));
+    // Make error dialog larger and more prominent
+    let dialog_width = 80.min(area.width.saturating_sub(4));
+    let dialog_height = 20.min(area.height.saturating_sub(4));
 
     let dialog_area = centered_rect(dialog_width, dialog_height, area);
     frame.render_widget(Clear, dialog_area);
 
     let block = Block::default()
-        .title(" Error Details (j/k to scroll, Esc to close) ")
+        .title(" ⚠ Error ")
+        .title_bottom(" [↑/↓ or j/k] Scroll  [Enter/Esc] Close ")
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(Color::Red))
+        .border_style(Style::default().fg(Color::Red).add_modifier(Modifier::BOLD))
         .style(Style::default().bg(Color::Black));
 
     let inner = block.inner(dialog_area);
     frame.render_widget(block, dialog_area);
 
     let error_text = app.error_detail.as_deref().unwrap_or("No error details");
-    let paragraph = Paragraph::new(error_text)
+
+    // Add visual separator and formatting
+    let formatted_error = format!("{}\n\n─────────────────────────────────────────\nCheck the QEMU configuration or launch.sh script for issues.", error_text);
+
+    let paragraph = Paragraph::new(formatted_error)
         .style(Style::default().fg(Color::White))
         .wrap(Wrap { trim: false })
         .scroll((app.error_scroll, 0));
