@@ -1,7 +1,3 @@
-# computer-history-with-claude
-
-A project using Claude Code (CLI) to build, maintain, and manage over 30 QEMU virtual machines showcasing a variety of Linux distributions and operating systems from computing history.
-
 ## vm-curator
 
 A Rust TUI application for managing the QEMU VM library at `~/vm-space`.
