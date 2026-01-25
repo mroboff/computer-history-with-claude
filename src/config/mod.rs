@@ -4,6 +4,7 @@ use std::path::PathBuf;
 
 /// Application configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
 pub struct Config {
     /// Path to VM library directory
     pub vm_library_path: PathBuf,
@@ -13,6 +14,22 @@ pub struct Config {
     pub ascii_art_path: PathBuf,
     /// Default snapshot name prefix
     pub snapshot_prefix: String,
+
+    // === VM Creation Defaults ===
+    /// Default memory for new VMs (MB)
+    pub default_memory_mb: u32,
+    /// Default CPU cores for new VMs
+    pub default_cpu_cores: u32,
+    /// Default disk size for new VMs (GB)
+    pub default_disk_size_gb: u32,
+    /// Default display backend (gtk, sdl, spice)
+    pub default_display: String,
+    /// Enable KVM acceleration by default
+    pub default_enable_kvm: bool,
+
+    // === Behavior ===
+    /// Show confirmation dialog before launching VMs
+    pub confirm_before_launch: bool,
 }
 
 impl Default for Config {
@@ -27,6 +44,16 @@ impl Default for Config {
             metadata_path: config_dir.join("metadata"),
             ascii_art_path: config_dir.join("ascii"),
             snapshot_prefix: "snapshot".to_string(),
+
+            // VM Creation Defaults
+            default_memory_mb: 4096,
+            default_cpu_cores: 2,
+            default_disk_size_gb: 64,
+            default_display: "gtk".to_string(),
+            default_enable_kvm: true,
+
+            // Behavior
+            confirm_before_launch: true,
         }
     }
 }

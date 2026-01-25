@@ -95,6 +95,8 @@ fn render_help_bar(app: &App, area: Rect, frame: &mut Frame) {
         Span::raw(" Manage "),
         Span::styled(" [c]", Style::default().fg(Color::Yellow)),
         Span::raw(" Create "),
+        Span::styled(" [s]", Style::default().fg(Color::Yellow)),
+        Span::raw(" Settings "),
         Span::styled(" [/]", Style::default().fg(Color::Yellow)),
         Span::raw(" Search "),
         Span::styled(" [?]", Style::default().fg(Color::Yellow)),

@@ -376,6 +376,9 @@ fn render(app: &App, frame: &mut Frame) {
             render_dim_overlay(frame);
             screens::create_wizard::render_download(app, frame);
         }
+        Screen::Settings => {
+            screens::settings::render(app, frame);
+        }
     }
 }
 
@@ -413,6 +416,7 @@ fn handle_key(app: &mut App, key: KeyEvent) -> Result<()> {
         Screen::CreateWizard => screens::create_wizard::handle_key(app, key)?,
         Screen::CreateWizardCustomOs => screens::create_wizard::handle_custom_os_key(app, key)?,
         Screen::CreateWizardDownload => screens::create_wizard::handle_download_key(app, key)?,
+        Screen::Settings => { screens::settings::handle_input(app, key)?; }
     }
 
     Ok(())
@@ -430,7 +434,12 @@ fn handle_main_menu(app: &mut App, key: KeyEvent) -> Result<()> {
         }
         KeyCode::Enter => {
             if app.selected_vm().is_some() {
-                app.push_screen(Screen::Confirm(ConfirmAction::LaunchVm));
+                if app.config.confirm_before_launch {
+                    app.push_screen(Screen::Confirm(ConfirmAction::LaunchVm));
+                } else {
+                    // Launch directly without confirmation
+                    execute_confirm_action(app, ConfirmAction::LaunchVm)?;
+                }
             }
         }
         KeyCode::Char('m') | KeyCode::Char('M') => {
@@ -445,6 +454,9 @@ fn handle_main_menu(app: &mut App, key: KeyEvent) -> Result<()> {
         KeyCode::Char('?') => app.push_screen(Screen::Help),
         KeyCode::Char('c') | KeyCode::Char('C') => {
             app.start_create_wizard();
+        }
+        KeyCode::Char('s') | KeyCode::Char('S') => {
+            app.push_screen(Screen::Settings);
         }
         _ => {}
     }

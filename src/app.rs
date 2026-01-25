@@ -48,6 +48,8 @@ pub enum Screen {
     CreateWizardCustomOs,
     /// ISO download progress screen
     CreateWizardDownload,
+    /// Application settings
+    Settings,
 }
 
 /// Context for text input dialogs
@@ -512,6 +514,12 @@ pub struct App {
     pub qemu_profiles: QemuProfileStore,
     /// VM creation wizard state
     pub wizard_state: Option<CreateWizardState>,
+    /// Settings screen selected item
+    pub settings_selected: usize,
+    /// Settings screen editing mode
+    pub settings_editing: bool,
+    /// Settings screen edit buffer (for text fields)
+    pub settings_edit_buffer: String,
 }
 
 /// Entry in file browser
@@ -620,6 +628,9 @@ impl App {
             script_editor_h_scroll: 0,
             qemu_profiles,
             wizard_state: None,
+            settings_selected: 0,
+            settings_editing: false,
+            settings_edit_buffer: String::new(),
         })
     }
 
@@ -1005,7 +1016,16 @@ impl App {
 
     /// Start the VM creation wizard
     pub fn start_create_wizard(&mut self) {
-        self.wizard_state = Some(CreateWizardState::default());
+        let mut state = CreateWizardState::default();
+
+        // Apply user config defaults
+        state.disk_size_gb = self.config.default_disk_size_gb;
+        state.qemu_config.memory_mb = self.config.default_memory_mb;
+        state.qemu_config.cpu_cores = self.config.default_cpu_cores;
+        state.qemu_config.enable_kvm = self.config.default_enable_kvm;
+        state.qemu_config.display = self.config.default_display.clone();
+
+        self.wizard_state = Some(state);
         self.push_screen(Screen::CreateWizard);
     }
 
