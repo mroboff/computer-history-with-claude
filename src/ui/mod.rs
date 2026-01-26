@@ -331,6 +331,11 @@ fn render(app: &App, frame: &mut Frame) {
             render_dim_overlay(frame);
             render_usb_devices(app, frame);
         }
+        Screen::PciPassthrough => {
+            screens::main_menu::render(app, frame);
+            render_dim_overlay(frame);
+            screens::pci_passthrough::render(app, frame);
+        }
         Screen::Confirm(action) => {
             screens::main_menu::render(app, frame);
             render_dim_overlay(frame);
@@ -407,6 +412,7 @@ fn handle_key(app: &mut App, key: KeyEvent) -> Result<()> {
         Screen::Snapshots => handle_snapshots(app, key)?,
         Screen::BootOptions => handle_boot_options(app, key)?,
         Screen::UsbDevices => handle_usb_devices(app, key)?,
+        Screen::PciPassthrough => screens::pci_passthrough::handle_key(app, key)?,
         Screen::Confirm(action) => handle_confirm(app, action.clone(), key)?,
         Screen::Help => handle_help(app, key)?,
         Screen::Search => handle_search(app, key)?,
@@ -464,58 +470,78 @@ fn handle_main_menu(app: &mut App, key: KeyEvent) -> Result<()> {
 }
 
 fn handle_management(app: &mut App, key: KeyEvent) -> Result<()> {
+    use screens::management::{get_menu_items, menu_item_count, MenuAction};
+
+    let item_count = menu_item_count(app);
+
     match key.code {
         KeyCode::Esc => app.pop_screen(),
-        KeyCode::Char('j') | KeyCode::Down => app.menu_next(screens::management::MENU_ITEMS.len()),
+        KeyCode::Char('j') | KeyCode::Down => app.menu_next(item_count),
         KeyCode::Char('k') | KeyCode::Up => app.menu_prev(),
-        KeyCode::Enter | KeyCode::Char('1') | KeyCode::Char('2') | KeyCode::Char('3') | KeyCode::Char('4') | KeyCode::Char('5') | KeyCode::Char('6') => {
-            let item = match key.code {
+        KeyCode::Enter | KeyCode::Char('1') | KeyCode::Char('2') | KeyCode::Char('3') | KeyCode::Char('4') | KeyCode::Char('5') | KeyCode::Char('6') | KeyCode::Char('7') => {
+            // Map number keys to menu index
+            let selected_idx = match key.code {
                 KeyCode::Char('1') => 0,
                 KeyCode::Char('2') => 1,
                 KeyCode::Char('3') => 2,
                 KeyCode::Char('4') => 3,
                 KeyCode::Char('5') => 4,
                 KeyCode::Char('6') => 5,
+                KeyCode::Char('7') => 6,
                 _ => app.selected_menu_item,
             };
 
-            match item {
-                0 => {
-                    app.selected_menu_item = 0;
-                    app.push_screen(Screen::BootOptions);
-                }
-                1 => {
-                    app.load_snapshots()?;
-                    app.push_screen(Screen::Snapshots);
-                }
-                2 => {
-                    app.load_usb_devices()?;
-                    // Load saved USB passthrough config and pre-select matching devices
-                    if let Some(vm) = app.selected_vm() {
-                        let saved = crate::vm::load_usb_passthrough(vm);
-                        app.selected_usb_devices.clear();
-                        for saved_dev in &saved {
-                            // Find matching device by vendor/product ID
-                            for (i, dev) in app.usb_devices.iter().enumerate() {
-                                if dev.vendor_id == saved_dev.vendor_id
-                                    && dev.product_id == saved_dev.product_id
-                                {
-                                    app.selected_usb_devices.push(i);
-                                    break;
+            // Get the menu items and find the action
+            if let Some(vm) = app.selected_vm() {
+                let menu_items = get_menu_items(vm, &app.config);
+                if let Some(item) = menu_items.get(selected_idx) {
+                    match item.action {
+                        MenuAction::BootOptions => {
+                            app.selected_menu_item = 0;
+                            app.push_screen(Screen::BootOptions);
+                        }
+                        MenuAction::Snapshots => {
+                            app.load_snapshots()?;
+                            app.push_screen(Screen::Snapshots);
+                        }
+                        MenuAction::UsbPassthrough => {
+                            app.load_usb_devices()?;
+                            // Load saved USB passthrough config and pre-select matching devices
+                            if let Some(vm) = app.selected_vm() {
+                                let saved = crate::vm::load_usb_passthrough(vm);
+                                app.selected_usb_devices.clear();
+                                for saved_dev in &saved {
+                                    // Find matching device by vendor/product ID
+                                    for (i, dev) in app.usb_devices.iter().enumerate() {
+                                        if dev.vendor_id == saved_dev.vendor_id
+                                            && dev.product_id == saved_dev.product_id
+                                        {
+                                            app.selected_usb_devices.push(i);
+                                            break;
+                                        }
+                                    }
                                 }
                             }
+                            app.selected_menu_item = 0;
+                            app.push_screen(Screen::UsbDevices);
+                        }
+                        MenuAction::PciPassthrough => {
+                            app.load_pci_devices()?;
+                            app.selected_menu_item = 0;
+                            app.push_screen(Screen::PciPassthrough);
+                        }
+                        MenuAction::ResetVm => {
+                            app.push_screen(Screen::Confirm(ConfirmAction::ResetVm));
+                        }
+                        MenuAction::DeleteVm => {
+                            app.push_screen(Screen::Confirm(ConfirmAction::DeleteVm));
+                        }
+                        MenuAction::EditRawConfig => {
+                            app.load_script_into_editor();
+                            app.push_screen(Screen::RawScript);
                         }
                     }
-                    app.selected_menu_item = 0;
-                    app.push_screen(Screen::UsbDevices);
                 }
-                3 => app.push_screen(Screen::Confirm(ConfirmAction::ResetVm)),
-                4 => app.push_screen(Screen::Confirm(ConfirmAction::DeleteVm)),
-                5 => {
-                    app.load_script_into_editor();
-                    app.push_screen(Screen::RawScript);
-                }
-                _ => {}
             }
         }
         _ => {}

@@ -4,7 +4,7 @@ use std::sync::mpsc::{self, Receiver, Sender};
 use std::time::Instant;
 
 use crate::config::Config;
-use crate::hardware::UsbDevice;
+use crate::hardware::{GpuPassthroughStatus, PciDevice, UsbDevice};
 use crate::metadata::{AsciiArtStore, HierarchyConfig, MetadataStore, OsInfo, QemuProfileStore};
 use crate::ui::widgets::build_visual_order;
 use crate::vm::{discover_vms, BootMode, DiscoveredVm, LaunchOptions, Snapshot};
@@ -30,6 +30,8 @@ pub enum Screen {
     BootOptions,
     /// USB device selection
     UsbDevices,
+    /// PCI device selection for passthrough
+    PciPassthrough,
     /// Confirmation dialog
     Confirm(ConfirmAction),
     /// Help screen
@@ -471,6 +473,12 @@ pub struct App {
     pub usb_devices: Vec<UsbDevice>,
     /// Selected USB devices for passthrough
     pub selected_usb_devices: Vec<usize>,
+    /// PCI devices (cached)
+    pub pci_devices: Vec<PciDevice>,
+    /// Selected PCI devices for passthrough
+    pub selected_pci_devices: Vec<usize>,
+    /// GPU passthrough status (prerequisites)
+    pub gpu_status: Option<GpuPassthroughStatus>,
     /// Selected management menu item
     pub selected_menu_item: usize,
     /// Current boot mode
@@ -608,6 +616,9 @@ impl App {
             selected_snapshot: 0,
             usb_devices: Vec::new(),
             selected_usb_devices: Vec::new(),
+            pci_devices: Vec::new(),
+            selected_pci_devices: Vec::new(),
+            gpu_status: None,
             selected_menu_item: 0,
             boot_mode: BootMode::Normal,
             search_query: String::new(),
@@ -776,6 +787,52 @@ impl App {
             self.selected_usb_devices.remove(pos);
         } else {
             self.selected_usb_devices.push(index);
+        }
+    }
+
+    /// Load PCI devices
+    pub fn load_pci_devices(&mut self) -> Result<()> {
+        self.pci_devices = crate::hardware::enumerate_pci_devices()?;
+        self.selected_pci_devices.clear();
+        self.gpu_status = Some(crate::hardware::check_gpu_passthrough_status());
+        Ok(())
+    }
+
+    /// Toggle PCI device selection
+    pub fn toggle_pci_device(&mut self, index: usize) {
+        // Don't allow selecting boot VGA
+        if let Some(device) = self.pci_devices.get(index) {
+            if device.is_boot_vga {
+                return;
+            }
+        }
+
+        if let Some(pos) = self.selected_pci_devices.iter().position(|&i| i == index) {
+            self.selected_pci_devices.remove(pos);
+        } else {
+            self.selected_pci_devices.push(index);
+        }
+    }
+
+    /// Auto-select a GPU and its paired audio device
+    pub fn auto_select_gpu(&mut self, gpu_index: usize) {
+        // Clear existing selection
+        self.selected_pci_devices.clear();
+
+        if let Some(gpu) = self.pci_devices.get(gpu_index) {
+            if gpu.is_boot_vga {
+                return;
+            }
+
+            // Select the GPU
+            self.selected_pci_devices.push(gpu_index);
+
+            // Try to find and select the paired audio device
+            if let Some(audio) = crate::hardware::find_gpu_audio_pair(gpu, &self.pci_devices) {
+                if let Some(audio_idx) = self.pci_devices.iter().position(|d| d.address == audio.address) {
+                    self.selected_pci_devices.push(audio_idx);
+                }
+            }
         }
     }
 

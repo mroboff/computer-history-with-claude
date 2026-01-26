@@ -19,6 +19,10 @@ pub enum SettingsItem {
     DefaultDisplay,
     DefaultEnableKvm,
     ConfirmBeforeLaunch,
+    // GPU Passthrough settings
+    EnableGpuPassthrough,
+    DefaultIvshmemSize,
+    ShowGpuWarnings,
 }
 
 impl SettingsItem {
@@ -32,6 +36,10 @@ impl SettingsItem {
             SettingsItem::DefaultDisplay,
             SettingsItem::DefaultEnableKvm,
             SettingsItem::ConfirmBeforeLaunch,
+            // GPU Passthrough section
+            SettingsItem::EnableGpuPassthrough,
+            SettingsItem::DefaultIvshmemSize,
+            SettingsItem::ShowGpuWarnings,
         ]
     }
 
@@ -45,6 +53,10 @@ impl SettingsItem {
             SettingsItem::DefaultDisplay => "Default Display",
             SettingsItem::DefaultEnableKvm => "Enable KVM by Default",
             SettingsItem::ConfirmBeforeLaunch => "Confirm Before Launch",
+            // GPU Passthrough
+            SettingsItem::EnableGpuPassthrough => "Enable GPU Passthrough",
+            SettingsItem::DefaultIvshmemSize => "IVSHMEM Size (MB)",
+            SettingsItem::ShowGpuWarnings => "Show GPU Warnings",
         }
     }
 
@@ -58,12 +70,22 @@ impl SettingsItem {
             SettingsItem::DefaultDisplay => config.default_display.clone(),
             SettingsItem::DefaultEnableKvm => if config.default_enable_kvm { "Yes" } else { "No" }.to_string(),
             SettingsItem::ConfirmBeforeLaunch => if config.confirm_before_launch { "Yes" } else { "No" }.to_string(),
+            // GPU Passthrough
+            SettingsItem::EnableGpuPassthrough => if config.enable_gpu_passthrough { "Yes" } else { "No" }.to_string(),
+            SettingsItem::DefaultIvshmemSize => config.default_ivshmem_size_mb.to_string(),
+            SettingsItem::ShowGpuWarnings => if config.show_gpu_warnings { "Yes" } else { "No" }.to_string(),
         }
     }
 
     /// Check if this is a boolean toggle setting
     pub fn is_toggle(&self) -> bool {
-        matches!(self, SettingsItem::DefaultEnableKvm | SettingsItem::ConfirmBeforeLaunch)
+        matches!(
+            self,
+            SettingsItem::DefaultEnableKvm
+                | SettingsItem::ConfirmBeforeLaunch
+                | SettingsItem::EnableGpuPassthrough
+                | SettingsItem::ShowGpuWarnings
+        )
     }
 
     /// Check if this is a cycle setting (display backend)
@@ -241,6 +263,12 @@ fn toggle_setting(app: &mut App, item: SettingsItem) -> anyhow::Result<()> {
         SettingsItem::ConfirmBeforeLaunch => {
             app.config.confirm_before_launch = !app.config.confirm_before_launch;
         }
+        SettingsItem::EnableGpuPassthrough => {
+            app.config.enable_gpu_passthrough = !app.config.enable_gpu_passthrough;
+        }
+        SettingsItem::ShowGpuWarnings => {
+            app.config.show_gpu_warnings = !app.config.show_gpu_warnings;
+        }
         _ => {}
     }
     save_config(app)?;
@@ -305,6 +333,12 @@ fn apply_edit(app: &mut App) -> anyhow::Result<()> {
             }
             SettingsItem::DefaultDisplay => {
                 app.config.default_display = value.to_string();
+            }
+            SettingsItem::DefaultIvshmemSize => {
+                if let Ok(mb) = value.parse::<u32>() {
+                    // Clamp to reasonable range (16-512 MB)
+                    app.config.default_ivshmem_size_mb = mb.max(16).min(512);
+                }
             }
             _ => {}
         }
