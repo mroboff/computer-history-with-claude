@@ -10,6 +10,11 @@ This was extensively tested by the developer on an RTX-4090 in Arch Linux using 
 
 ### Changelog
 
+**v0.1.2**
+- **Binary Packages**: Pre-built packages now available for Linux (DEB, RPM, AppImage, tarball)
+- **crates.io**: Install via `cargo install vm-curator`
+- **AUR**: Available for Arch Linux users
+
 **v0.1.1**
 - **Custom VM Names**: VMs can now have custom display names that persist across sessions
 - **Rename VMs**: New management menu option to rename VMs on the fly
