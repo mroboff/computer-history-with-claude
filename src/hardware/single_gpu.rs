@@ -1,0 +1,442 @@
+//! Single GPU Passthrough Support
+//!
+//! Handles configuration and detection for single GPU passthrough scenarios where
+//! the user's only (or primary) GPU is passed to a VM. This requires stopping the
+//! display manager and running from a TTY.
+
+use std::fs;
+use std::path::{Path, PathBuf};
+use std::process::Command;
+
+use super::pci::PciDevice;
+
+/// Supported display managers (systemd-based only)
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DisplayManager {
+    Gdm,
+    Sddm,
+    Lightdm,
+    Unknown(String),
+}
+
+impl DisplayManager {
+    /// Get the systemd service name for this display manager
+    pub fn service_name(&self) -> &str {
+        match self {
+            DisplayManager::Gdm => "gdm",
+            DisplayManager::Sddm => "sddm",
+            DisplayManager::Lightdm => "lightdm",
+            DisplayManager::Unknown(name) => name,
+        }
+    }
+
+    /// Get display name for UI
+    pub fn display_name(&self) -> &str {
+        match self {
+            DisplayManager::Gdm => "GDM (GNOME)",
+            DisplayManager::Sddm => "SDDM (KDE)",
+            DisplayManager::Lightdm => "LightDM",
+            DisplayManager::Unknown(name) => name,
+        }
+    }
+}
+
+impl std::fmt::Display for DisplayManager {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.service_name())
+    }
+}
+
+/// GPU driver types
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum GpuDriver {
+    Nvidia,
+    Amdgpu,
+    I915,
+    Nouveau,
+    Radeon,
+    Other(String),
+}
+
+impl GpuDriver {
+    /// Get the kernel module name
+    pub fn module_name(&self) -> &str {
+        match self {
+            GpuDriver::Nvidia => "nvidia",
+            GpuDriver::Amdgpu => "amdgpu",
+            GpuDriver::I915 => "i915",
+            GpuDriver::Nouveau => "nouveau",
+            GpuDriver::Radeon => "radeon",
+            GpuDriver::Other(name) => name,
+        }
+    }
+
+    /// Get additional modules that need to be unloaded (e.g., nvidia dependencies)
+    pub fn dependent_modules(&self) -> Vec<&'static str> {
+        match self {
+            GpuDriver::Nvidia => vec!["nvidia_drm", "nvidia_modeset", "nvidia_uvm", "nvidia"],
+            GpuDriver::Amdgpu => vec!["amdgpu"],
+            GpuDriver::I915 => vec!["i915"],
+            GpuDriver::Nouveau => vec!["nouveau"],
+            GpuDriver::Radeon => vec!["radeon"],
+            GpuDriver::Other(_) => vec![],
+        }
+    }
+}
+
+impl std::fmt::Display for GpuDriver {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.module_name())
+    }
+}
+
+/// Looking Glass configuration
+#[derive(Debug, Clone)]
+pub struct LookingGlassConfig {
+    /// Enable Looking Glass integration
+    pub enabled: bool,
+    /// IVSHMEM size in megabytes (for frame buffer)
+    pub ivshmem_size_mb: u32,
+    /// Auto-launch Looking Glass client after VM starts
+    pub auto_launch_client: bool,
+    /// Path to Looking Glass client executable
+    pub client_path: Option<PathBuf>,
+}
+
+impl Default for LookingGlassConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            ivshmem_size_mb: 64,
+            auto_launch_client: true,
+            client_path: None,
+        }
+    }
+}
+
+impl LookingGlassConfig {
+    /// Calculate recommended IVSHMEM size based on resolution
+    /// Formula: width * height * 4 * 2 (double buffer) + 10MB overhead
+    pub fn recommended_size_for_resolution(width: u32, height: u32) -> u32 {
+        let frame_size = width * height * 4; // RGBA
+        let double_buffered = frame_size * 2;
+        let with_overhead = double_buffered + (10 * 1024 * 1024);
+        // Round up to next power of 2 in MB
+        let size_mb = (with_overhead + (1024 * 1024 - 1)) / (1024 * 1024);
+        size_mb.next_power_of_two()
+    }
+
+    /// Get IVSHMEM size string for QEMU (e.g., "64M")
+    pub fn ivshmem_size_str(&self) -> String {
+        format!("{}M", self.ivshmem_size_mb)
+    }
+
+    /// Find Looking Glass client in common locations
+    pub fn find_client() -> Option<PathBuf> {
+        let candidates = [
+            "/usr/bin/looking-glass-client",
+            "/usr/local/bin/looking-glass-client",
+            "/opt/looking-glass/bin/looking-glass-client",
+        ];
+
+        for path in candidates {
+            let p = PathBuf::from(path);
+            if p.exists() {
+                return Some(p);
+            }
+        }
+
+        // Try to find via which
+        if let Ok(output) = Command::new("which").arg("looking-glass-client").output() {
+            if output.status.success() {
+                let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
+                if !path.is_empty() {
+                    return Some(PathBuf::from(path));
+                }
+            }
+        }
+
+        None
+    }
+}
+
+/// Single GPU passthrough configuration
+#[derive(Debug, Clone)]
+pub struct SingleGpuConfig {
+    /// The GPU device to pass through
+    pub gpu: PciDevice,
+    /// Associated audio device (if any)
+    pub audio: Option<PciDevice>,
+    /// All devices in the IOMMU group
+    pub iommu_group_devices: Vec<PciDevice>,
+    /// Original driver the GPU was using
+    pub original_driver: GpuDriver,
+    /// Detected display manager
+    pub display_manager: DisplayManager,
+    /// Looking Glass configuration
+    pub looking_glass: LookingGlassConfig,
+}
+
+impl SingleGpuConfig {
+    /// Create a new configuration for the given GPU
+    pub fn new(gpu: PciDevice, all_devices: &[PciDevice]) -> Self {
+        let audio = super::pci::find_gpu_audio_pair(&gpu, all_devices);
+        let iommu_group_devices = super::pci::find_iommu_group_devices(&gpu);
+        let original_driver = detect_gpu_driver(&gpu);
+        let display_manager = detect_display_manager();
+        let looking_glass = LookingGlassConfig::default();
+
+        Self {
+            gpu,
+            audio,
+            iommu_group_devices,
+            original_driver,
+            display_manager,
+            looking_glass,
+        }
+    }
+
+    /// Get all PCI addresses that need to be unbound/rebound
+    pub fn all_passthrough_addresses(&self) -> Vec<&str> {
+        let mut addrs = vec![self.gpu.address.as_str()];
+        if let Some(ref audio) = self.audio {
+            addrs.push(audio.address.as_str());
+        }
+        addrs
+    }
+
+    /// Check if Looking Glass is properly configured
+    pub fn is_looking_glass_ready(&self) -> bool {
+        if !self.looking_glass.enabled {
+            return false;
+        }
+        // Check if client exists (if auto-launch is enabled)
+        if self.looking_glass.auto_launch_client {
+            return self.looking_glass.client_path.is_some()
+                || LookingGlassConfig::find_client().is_some();
+        }
+        true
+    }
+}
+
+/// Detect the currently running display manager
+pub fn detect_display_manager() -> DisplayManager {
+    // Check running services
+    let dm_services = [
+        ("gdm", DisplayManager::Gdm),
+        ("sddm", DisplayManager::Sddm),
+        ("lightdm", DisplayManager::Lightdm),
+    ];
+
+    for (service, dm) in dm_services {
+        if is_service_active(service) {
+            return dm;
+        }
+    }
+
+    // Check systemctl get-default for graphical target
+    if let Ok(output) = Command::new("systemctl")
+        .args(["get-default"])
+        .output()
+    {
+        let target = String::from_utf8_lossy(&output.stdout);
+        if target.contains("graphical") {
+            // Check which DM is set as display-manager
+            if let Ok(link) = fs::read_link("/etc/systemd/system/display-manager.service") {
+                let link_str = link.to_string_lossy();
+                if link_str.contains("gdm") {
+                    return DisplayManager::Gdm;
+                } else if link_str.contains("sddm") {
+                    return DisplayManager::Sddm;
+                } else if link_str.contains("lightdm") {
+                    return DisplayManager::Lightdm;
+                } else {
+                    // Extract service name from path
+                    if let Some(name) = link.file_name() {
+                        let name = name.to_string_lossy();
+                        if let Some(name) = name.strip_suffix(".service") {
+                            return DisplayManager::Unknown(name.to_string());
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Try checking /etc/X11/default-display-manager (Debian-based)
+    if let Ok(content) = fs::read_to_string("/etc/X11/default-display-manager") {
+        let content = content.trim();
+        if content.contains("gdm") {
+            return DisplayManager::Gdm;
+        } else if content.contains("sddm") {
+            return DisplayManager::Sddm;
+        } else if content.contains("lightdm") {
+            return DisplayManager::Lightdm;
+        }
+    }
+
+    DisplayManager::Unknown("display-manager".to_string())
+}
+
+/// Check if a systemd service is active
+fn is_service_active(service: &str) -> bool {
+    Command::new("systemctl")
+        .args(["is-active", "--quiet", service])
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
+}
+
+/// Detect the GPU driver from a PCI device
+pub fn detect_gpu_driver(device: &PciDevice) -> GpuDriver {
+    if let Some(ref driver) = device.driver {
+        match driver.as_str() {
+            "nvidia" => GpuDriver::Nvidia,
+            "amdgpu" => GpuDriver::Amdgpu,
+            "i915" => GpuDriver::I915,
+            "nouveau" => GpuDriver::Nouveau,
+            "radeon" => GpuDriver::Radeon,
+            other => GpuDriver::Other(other.to_string()),
+        }
+    } else {
+        // Try to infer from vendor
+        if device.is_nvidia() {
+            GpuDriver::Nvidia
+        } else if device.is_amd() {
+            GpuDriver::Amdgpu
+        } else if device.is_intel() {
+            GpuDriver::I915
+        } else {
+            GpuDriver::Other("unknown".to_string())
+        }
+    }
+}
+
+/// Check if the system supports single GPU passthrough
+pub fn check_single_gpu_support() -> SingleGpuSupport {
+    let mut support = SingleGpuSupport::default();
+
+    // Check IOMMU
+    support.iommu_enabled = Path::new("/sys/kernel/iommu_groups").exists()
+        && fs::read_dir("/sys/kernel/iommu_groups")
+            .map(|d| d.count() > 0)
+            .unwrap_or(false);
+
+    // Check VFIO modules
+    support.vfio_available = Path::new("/sys/bus/pci/drivers/vfio-pci").exists()
+        || check_module_available("vfio_pci");
+
+    // Check for boot VGA
+    if let Ok(devices) = super::pci::enumerate_pci_devices() {
+        support.boot_vga = devices.iter().find(|d| d.is_boot_vga).cloned();
+        support.has_single_gpu = devices.iter().filter(|d| d.is_gpu()).count() == 1;
+    }
+
+    // Check display manager
+    support.display_manager = Some(detect_display_manager());
+
+    // Check Looking Glass
+    support.looking_glass_client = LookingGlassConfig::find_client();
+
+    support
+}
+
+/// Check if a kernel module is available (not necessarily loaded)
+fn check_module_available(module: &str) -> bool {
+    // Check /proc/modules for loaded modules
+    if let Ok(modules) = fs::read_to_string("/proc/modules") {
+        if modules.contains(module) {
+            return true;
+        }
+    }
+
+    // Check if module exists in kernel modules directory
+    if let Ok(output) = Command::new("modinfo").arg(module).output() {
+        return output.status.success();
+    }
+
+    false
+}
+
+/// Single GPU passthrough support status
+#[derive(Debug, Default)]
+pub struct SingleGpuSupport {
+    /// IOMMU is enabled
+    pub iommu_enabled: bool,
+    /// VFIO modules are available
+    pub vfio_available: bool,
+    /// The boot VGA device (if found)
+    pub boot_vga: Option<PciDevice>,
+    /// System has only one GPU
+    pub has_single_gpu: bool,
+    /// Detected display manager
+    pub display_manager: Option<DisplayManager>,
+    /// Looking Glass client path (if found)
+    pub looking_glass_client: Option<PathBuf>,
+}
+
+impl SingleGpuSupport {
+    /// Check if basic single GPU passthrough is possible
+    pub fn is_supported(&self) -> bool {
+        self.iommu_enabled && self.vfio_available && self.boot_vga.is_some()
+    }
+
+    /// Get a summary of the support status
+    pub fn summary(&self) -> String {
+        if self.is_supported() {
+            "Single GPU passthrough is available".to_string()
+        } else {
+            let mut issues = Vec::new();
+            if !self.iommu_enabled {
+                issues.push("IOMMU not enabled");
+            }
+            if !self.vfio_available {
+                issues.push("VFIO modules not available");
+            }
+            if self.boot_vga.is_none() {
+                issues.push("No boot VGA device found");
+            }
+            format!("Not available: {}", issues.join(", "))
+        }
+    }
+}
+
+/// Check if we're running from a TTY (not a graphical terminal)
+pub fn is_running_from_tty() -> bool {
+    // Check for DISPLAY or WAYLAND_DISPLAY environment variables
+    std::env::var("DISPLAY").is_err() && std::env::var("WAYLAND_DISPLAY").is_err()
+}
+
+/// Check if single GPU scripts exist for a VM
+pub fn scripts_exist(vm_path: &Path) -> bool {
+    vm_path.join("single-gpu-start.sh").exists()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_looking_glass_recommended_size() {
+        // 1080p
+        let size = LookingGlassConfig::recommended_size_for_resolution(1920, 1080);
+        assert!(size >= 32);
+
+        // 4K
+        let size = LookingGlassConfig::recommended_size_for_resolution(3840, 2160);
+        assert!(size >= 64);
+    }
+
+    #[test]
+    fn test_display_manager_service_names() {
+        assert_eq!(DisplayManager::Gdm.service_name(), "gdm");
+        assert_eq!(DisplayManager::Sddm.service_name(), "sddm");
+        assert_eq!(DisplayManager::Lightdm.service_name(), "lightdm");
+    }
+
+    #[test]
+    fn test_gpu_driver_modules() {
+        assert_eq!(GpuDriver::Nvidia.module_name(), "nvidia");
+        assert!(!GpuDriver::Nvidia.dependent_modules().is_empty());
+    }
+}

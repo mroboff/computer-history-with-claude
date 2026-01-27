@@ -342,6 +342,16 @@ fn render(app: &App, frame: &mut Frame) {
             render_dim_overlay(frame);
             screens::pci_passthrough::render(app, frame);
         }
+        Screen::SingleGpuSetup => {
+            screens::main_menu::render(app, frame);
+            render_dim_overlay(frame);
+            screens::single_gpu_setup::render(app, frame);
+        }
+        Screen::SingleGpuInstructions => {
+            screens::main_menu::render(app, frame);
+            render_dim_overlay(frame);
+            screens::single_gpu_setup::render_instructions(app, frame);
+        }
         Screen::Confirm(action) => {
             screens::main_menu::render(app, frame);
             render_dim_overlay(frame);
@@ -420,6 +430,8 @@ fn handle_key(app: &mut App, key: KeyEvent) -> Result<()> {
         Screen::DisplayOptions => handle_display_options(app, key)?,
         Screen::UsbDevices => handle_usb_devices(app, key)?,
         Screen::PciPassthrough => screens::pci_passthrough::handle_key(app, key)?,
+        Screen::SingleGpuSetup => screens::single_gpu_setup::handle_key(app, key)?,
+        Screen::SingleGpuInstructions => handle_single_gpu_instructions(app, key)?,
         Screen::Confirm(action) => handle_confirm(app, action.clone(), key)?,
         Screen::Help => handle_help(app, key)?,
         Screen::Search => handle_search(app, key)?,
@@ -536,6 +548,23 @@ fn handle_management(app: &mut App, key: KeyEvent) -> Result<()> {
                             app.load_pci_devices()?;
                             app.selected_menu_item = 0;
                             app.push_screen(Screen::PciPassthrough);
+                        }
+                        MenuAction::SingleGpuPassthrough => {
+                            // Load PCI devices and initialize single GPU config
+                            app.load_pci_devices()?;
+                            screens::single_gpu_setup::init_single_gpu_config(app);
+                            app.single_gpu_selected_field = 0;
+                            app.push_screen(Screen::SingleGpuSetup);
+                        }
+                        MenuAction::ChangeDisplay => {
+                            app.selected_menu_item = 0;
+                            app.push_screen(Screen::DisplayOptions);
+                        }
+                        MenuAction::RenameVm => {
+                            if let Some(vm) = app.selected_vm() {
+                                app.text_input_buffer = vm.display_name();
+                            }
+                            app.push_screen(Screen::TextInput(TextInputContext::RenameVm));
                         }
                         MenuAction::ResetVm => {
                             app.push_screen(Screen::Confirm(ConfirmAction::ResetVm));
@@ -1472,6 +1501,17 @@ fn handle_error_dialog(app: &mut App, key: KeyEvent) -> Result<()> {
         }
         KeyCode::Char('k') | KeyCode::Up => {
             app.error_scroll = app.error_scroll.saturating_sub(1);
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
+fn handle_single_gpu_instructions(app: &mut App, key: KeyEvent) -> Result<()> {
+    match key.code {
+        KeyCode::Esc | KeyCode::Enter => {
+            app.single_gpu_show_instructions = false;
+            app.pop_screen();
         }
         _ => {}
     }

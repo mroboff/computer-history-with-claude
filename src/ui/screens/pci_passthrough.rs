@@ -27,13 +27,17 @@ pub fn render(app: &App, frame: &mut Frame) {
     frame.render_widget(Clear, dialog_area);
 
     let selected_count = app.selected_pci_devices.len();
-    let gpu_count = app.pci_devices.iter().filter(|d| d.is_gpu() && !d.is_boot_vga).count();
-    let title = format!(
-        " PCI Passthrough ({} selected, {} GPU{} available) ",
-        selected_count,
-        gpu_count,
-        if gpu_count == 1 { "" } else { "s" }
-    );
+    let title = if app.config.enable_gpu_passthrough {
+        let gpu_count = app.pci_devices.iter().filter(|d| d.is_gpu() && !d.is_boot_vga).count();
+        format!(
+            " PCI Passthrough ({} selected, {} GPU{} available) ",
+            selected_count,
+            gpu_count,
+            if gpu_count == 1 { "" } else { "s" }
+        )
+    } else {
+        format!(" PCI Passthrough ({} selected) ", selected_count)
+    };
 
     let block = Block::default()
         .title(title)
@@ -70,12 +74,15 @@ pub fn render(app: &App, frame: &mut Frame) {
     // Render device list
     render_device_list(app, frame, h_chunks[1]);
 
-    // Help text
-    let help = Paragraph::new(
+    // Help text - show GPU options only when GPU passthrough is enabled
+    let help_text = if app.config.enable_gpu_passthrough {
         "[Space/Enter] Toggle  [g] Auto-select GPU  [s] Save  [p] Prerequisites  [Esc] Back"
-    )
-    .style(Style::default().fg(Color::DarkGray))
-    .alignment(Alignment::Center);
+    } else {
+        "[Space/Enter] Toggle  [s] Save  [Esc] Back"
+    };
+    let help = Paragraph::new(help_text)
+        .style(Style::default().fg(Color::DarkGray))
+        .alignment(Alignment::Center);
     frame.render_widget(help, chunks[2]);
 }
 
@@ -129,15 +136,24 @@ fn render_device_list(app: &App, frame: &mut Frame, area: Rect) {
         return;
     }
 
-    // Filter to show relevant devices (GPUs, audio devices in GPU IOMMU groups, USB controllers)
+    // Filter devices to show useful passthrough candidates
     let relevant_devices: Vec<(usize, &PciDevice)> = app
         .pci_devices
         .iter()
         .enumerate()
         .filter(|(_, d)| {
-            d.is_gpu()
-                || d.is_audio()
-                || d.iommu_group.is_some() && is_device_in_gpu_group(d, &app.pci_devices)
+            // Always show useful passthrough candidates (USB, network, storage, audio)
+            if d.is_passthrough_candidate() {
+                return true;
+            }
+            // When GPU passthrough is enabled, also show GPUs and GPU-related devices
+            if app.config.enable_gpu_passthrough {
+                d.is_gpu()
+                    || d.is_audio()
+                    || d.iommu_group.is_some() && is_device_in_gpu_group(d, &app.pci_devices)
+            } else {
+                false
+            }
         })
         .collect();
 
@@ -406,15 +422,26 @@ fn centered_rect(width: u16, height: u16, area: Rect) -> Rect {
 pub fn handle_key(app: &mut App, key: crossterm::event::KeyEvent) -> anyhow::Result<()> {
     use crossterm::event::KeyCode;
 
-    // Get relevant devices for navigation
+    let gpu_enabled = app.config.enable_gpu_passthrough;
+
+    // Get relevant devices for navigation (must match render filter)
     let relevant_indices: Vec<usize> = app
         .pci_devices
         .iter()
         .enumerate()
         .filter(|(_, d)| {
-            d.is_gpu()
-                || d.is_audio()
-                || d.iommu_group.is_some() && is_device_in_gpu_group(d, &app.pci_devices)
+            // Always include useful passthrough candidates
+            if d.is_passthrough_candidate() {
+                return true;
+            }
+            // When GPU passthrough is enabled, also include GPUs and GPU-related devices
+            if gpu_enabled {
+                d.is_gpu()
+                    || d.is_audio()
+                    || d.iommu_group.is_some() && is_device_in_gpu_group(d, &app.pci_devices)
+            } else {
+                false
+            }
         })
         .map(|(i, _)| i)
         .collect();
@@ -445,7 +472,7 @@ pub fn handle_key(app: &mut App, key: crossterm::event::KeyEvent) -> anyhow::Res
         KeyCode::Char(' ') | KeyCode::Enter => {
             app.toggle_pci_device(app.selected_menu_item);
         }
-        KeyCode::Char('g') | KeyCode::Char('G') => {
+        KeyCode::Char('g') | KeyCode::Char('G') if gpu_enabled => {
             // Auto-select current GPU and its audio pair
             if let Some(device) = app.pci_devices.get(app.selected_menu_item) {
                 if device.is_gpu() && !device.is_boot_vga {
@@ -471,12 +498,12 @@ pub fn handle_key(app: &mut App, key: crossterm::event::KeyEvent) -> anyhow::Res
                 }
             }
         }
-        KeyCode::Char('p') | KeyCode::Char('P') => {
-            // Refresh and show prerequisites
+        KeyCode::Char('p') | KeyCode::Char('P') if gpu_enabled => {
+            // Refresh and show GPU prerequisites
             app.gpu_status = Some(crate::hardware::check_gpu_passthrough_status());
             // We'll need a separate screen state for prerequisites
             // For now, just refresh the status
-            app.set_status("Prerequisites refreshed");
+            app.set_status("GPU prerequisites refreshed");
         }
         _ => {}
     }

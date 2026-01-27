@@ -4,7 +4,7 @@ use std::sync::mpsc::{self, Receiver, Sender};
 use std::time::Instant;
 
 use crate::config::Config;
-use crate::hardware::{GpuPassthroughStatus, PciDevice, UsbDevice};
+use crate::hardware::{GpuPassthroughStatus, PciDevice, SingleGpuConfig, UsbDevice};
 use crate::metadata::{AsciiArtStore, HierarchyConfig, MetadataStore, OsInfo, QemuProfileStore};
 use crate::ui::widgets::build_visual_order;
 use crate::vm::{discover_vms, BootMode, DiscoveredVm, LaunchOptions, Snapshot};
@@ -34,6 +34,10 @@ pub enum Screen {
     UsbDevices,
     /// PCI device selection for passthrough
     PciPassthrough,
+    /// Single GPU passthrough setup
+    SingleGpuSetup,
+    /// Single GPU passthrough instructions dialog
+    SingleGpuInstructions,
     /// Confirmation dialog
     Confirm(ConfirmAction),
     /// Help screen
@@ -568,6 +572,14 @@ pub struct App {
     pub settings_editing: bool,
     /// Settings screen edit buffer (for text fields)
     pub settings_edit_buffer: String,
+
+    // === Single GPU Passthrough ===
+    /// Single GPU passthrough configuration
+    pub single_gpu_config: Option<SingleGpuConfig>,
+    /// Selected field in single GPU setup screen
+    pub single_gpu_selected_field: usize,
+    /// Whether to show the instructions dialog
+    pub single_gpu_show_instructions: bool,
 }
 
 /// Entry in file browser
@@ -679,6 +691,11 @@ impl App {
             settings_selected: 0,
             settings_editing: false,
             settings_edit_buffer: String::new(),
+
+            // Single GPU Passthrough
+            single_gpu_config: None,
+            single_gpu_selected_field: 0,
+            single_gpu_show_instructions: false,
         })
     }
 

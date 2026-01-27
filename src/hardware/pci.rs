@@ -19,10 +19,34 @@ pub mod class_codes {
     pub const AUDIO_DEVICE: u32 = 0x040300;
     /// USB controller
     pub const USB_CONTROLLER: u32 = 0x0c0300;
-    /// Network controller
+    /// Network controller (Ethernet)
     pub const NETWORK_CONTROLLER: u32 = 0x020000;
     /// NVMe controller
     pub const NVME_CONTROLLER: u32 = 0x010802;
+    /// SATA controller
+    pub const SATA_CONTROLLER: u32 = 0x010600;
+    /// Serial controller
+    pub const SERIAL_CONTROLLER: u32 = 0x070000;
+
+    // Infrastructure devices (typically not useful for passthrough)
+    /// Host bridge
+    pub const HOST_BRIDGE: u32 = 0x060000;
+    /// ISA bridge
+    pub const ISA_BRIDGE: u32 = 0x060100;
+    /// PCI bridge
+    pub const PCI_BRIDGE: u32 = 0x060400;
+    /// PCI-to-PCI bridge (subtractive decode)
+    pub const PCI_BRIDGE_SUB: u32 = 0x060401;
+    /// Other bridge
+    pub const OTHER_BRIDGE: u32 = 0x068000;
+    /// SMBus controller
+    pub const SMBUS: u32 = 0x0c0500;
+    /// Signal processing controller
+    pub const SIGNAL_PROC: u32 = 0x118000;
+    /// Encryption controller
+    pub const ENCRYPTION: u32 = 0x108000;
+    /// Non-essential instrumentation
+    pub const INSTRUMENTATION: u32 = 0x130000;
 }
 
 /// Represents a PCI device discovered on the system
@@ -72,6 +96,52 @@ impl PciDevice {
     /// Check if this is an audio device (likely GPU audio companion)
     pub fn is_audio(&self) -> bool {
         (self.class_code & 0xFFFF00) == class_codes::AUDIO_DEVICE
+    }
+
+    /// Check if this is a USB controller
+    pub fn is_usb_controller(&self) -> bool {
+        (self.class_code & 0xFFFF00) == class_codes::USB_CONTROLLER
+    }
+
+    /// Check if this is a network controller
+    pub fn is_network_controller(&self) -> bool {
+        (self.class_code & 0xFFFF00) == class_codes::NETWORK_CONTROLLER
+    }
+
+    /// Check if this is a storage controller (NVMe, SATA)
+    pub fn is_storage_controller(&self) -> bool {
+        let class_base = self.class_code & 0xFFFF00;
+        class_base == class_codes::NVME_CONTROLLER
+            || class_base == class_codes::SATA_CONTROLLER
+            || (self.class_code & 0xFF0000) == 0x010000 // Mass storage controller class
+    }
+
+    /// Check if this is an infrastructure device (bridge, SMBus, etc.)
+    pub fn is_infrastructure(&self) -> bool {
+        let class_base = self.class_code & 0xFFFF00;
+        let class_main = self.class_code & 0xFF0000;
+        // Bridge devices (class 06)
+        class_main == 0x060000
+            // SMBus
+            || class_base == class_codes::SMBUS
+            // Signal processing
+            || class_base == class_codes::SIGNAL_PROC
+            // Encryption controller (typically platform security)
+            || class_base == class_codes::ENCRYPTION
+            // Non-essential instrumentation
+            || class_base == class_codes::INSTRUMENTATION
+    }
+
+    /// Check if this device is a good candidate for non-GPU passthrough
+    /// (USB controllers, network cards, storage controllers, audio devices)
+    pub fn is_passthrough_candidate(&self) -> bool {
+        !self.is_infrastructure()
+            && !self.is_gpu()
+            && self.iommu_group.is_some()
+            && (self.is_usb_controller()
+                || self.is_network_controller()
+                || self.is_storage_controller()
+                || self.is_audio())
     }
 
     /// Check if this is an NVIDIA device
@@ -132,6 +202,15 @@ impl PciDevice {
             class_codes::USB_CONTROLLER => "USB Controller",
             class_codes::NETWORK_CONTROLLER => "Network Controller",
             class_codes::NVME_CONTROLLER => "NVMe Controller",
+            class_codes::SATA_CONTROLLER => "SATA Controller",
+            class_codes::SERIAL_CONTROLLER => "Serial Controller",
+            class_codes::HOST_BRIDGE => "Host Bridge",
+            class_codes::ISA_BRIDGE => "ISA Bridge",
+            class_codes::PCI_BRIDGE | class_codes::PCI_BRIDGE_SUB => "PCI Bridge",
+            class_codes::OTHER_BRIDGE => "Bridge Device",
+            class_codes::SMBUS => "SMBus Controller",
+            class_codes::SIGNAL_PROC => "Signal Processor",
+            class_codes::ENCRYPTION => "Encryption Controller",
             _ => "PCI Device",
         }
     }
@@ -148,6 +227,12 @@ impl PciDevice {
     #[allow(dead_code)]
     pub fn can_passthrough(&self) -> bool {
         !self.is_boot_vga && self.iommu_group.is_some()
+    }
+
+    /// Check if this device can be used for single GPU passthrough
+    /// Returns true for boot VGA devices with IOMMU group (requires special handling)
+    pub fn can_single_gpu_passthrough(&self) -> bool {
+        self.is_boot_vga && self.is_gpu() && self.iommu_group.is_some()
     }
 
     /// Generate QEMU vfio-pci passthrough arguments

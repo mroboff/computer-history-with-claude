@@ -22,6 +22,9 @@ pub enum MenuAction {
     Snapshots,
     UsbPassthrough,
     PciPassthrough,
+    SingleGpuPassthrough,
+    ChangeDisplay,
+    RenameVm,
     ResetVm,
     DeleteVm,
     EditRawConfig,
@@ -45,16 +48,34 @@ pub fn get_menu_items(vm: &DiscoveredVm, config: &Config) -> Vec<MenuItem> {
             description: "Pass USB devices to the VM",
             action: MenuAction::UsbPassthrough,
         },
+        MenuItem {
+            name: "PCI Passthrough",
+            description: "Pass PCI devices to the VM",
+            action: MenuAction::PciPassthrough,
+        },
     ];
 
-    // Add PCI passthrough if enabled in config
-    if config.enable_gpu_passthrough {
+    // Add Single GPU Passthrough option if enabled in settings
+    if config.single_gpu_enabled {
         items.push(MenuItem {
-            name: "PCI Passthrough",
-            description: "Pass PCI/GPU devices to the VM",
-            action: MenuAction::PciPassthrough,
+            name: "Single GPU Passthrough",
+            description: "Configure passthrough for your primary GPU",
+            action: MenuAction::SingleGpuPassthrough,
         });
     }
+
+    items.extend([
+        MenuItem {
+            name: "Change Display",
+            description: "GTK, SDL, SPICE, or VNC output",
+            action: MenuAction::ChangeDisplay,
+        },
+        MenuItem {
+            name: "Rename VM",
+            description: "Change the VM's display name",
+            action: MenuAction::RenameVm,
+        },
+    ]);
 
     // Add dangerous operations at the end
     items.extend([
