@@ -10,6 +10,9 @@ This was extensively tested by the developer on an RTX-4090 in Arch Linux using 
 
 ### Changelog
 
+**v0.1.3**
+- **First-Time Setup**: New users are now prompted to configure the VM library directory on first run
+
 **v0.1.2**
 - **Binary Packages**: Pre-built packages now available for Linux (DEB, RPM, AppImage, tarball)
 - **crates.io**: Install via `cargo install vm-curator`
