@@ -403,6 +403,8 @@ fn render(app: &App, frame: &mut Frame) {
             screens::create_wizard::render_download(app, frame);
         }
         Screen::Settings => {
+            screens::main_menu::render(app, frame);
+            render_dim_overlay(frame);
             screens::settings::render(app, frame);
         }
     }

@@ -1,6 +1,6 @@
 use ratatui::{
     prelude::*,
-    widgets::{Block, Borders, Paragraph, Wrap},
+    widgets::{Block, Borders, Clear, Paragraph, Widget, Wrap},
 };
 
 use crate::metadata::OsInfo;
@@ -15,6 +15,9 @@ pub struct AsciiInfoWidget<'a> {
 
 impl<'a> AsciiInfoWidget<'a> {
     pub fn render(self, area: Rect, buf: &mut Buffer) {
+        // Clear the area first to prevent stale characters when content changes
+        Clear.render(area, buf);
+
         let block = Block::default()
             .borders(Borders::ALL)
             .border_style(Style::default().fg(Color::Cyan));

@@ -1,6 +1,6 @@
 use ratatui::{
     prelude::*,
-    widgets::{Block, Borders, List, ListItem, ListState, StatefulWidget},
+    widgets::{Block, Borders, Clear, List, ListItem, ListState, StatefulWidget, Widget},
 };
 
 use crate::app::App;
@@ -100,6 +100,10 @@ impl<'a> VmListWidget<'a> {
     }
 
     pub fn render(self, area: Rect, buf: &mut Buffer) {
+        // Clear the area first to prevent stale characters from remaining
+        // when the list content changes (e.g., during search filtering)
+        Clear.render(area, buf);
+
         let title = format!(" VMs ({}) ", self.filtered_indices.len());
 
         // Build hierarchical structure

@@ -10,6 +10,9 @@ Please see [discussion](https://github.com/mroboff/vm-curator/discussions/11) fo
 
 ### Changelog
 
+**v0.2.1**
+- Fix UI rendering artifacts after closing Settings screen and during search filtering
+
 **v0.2.0**
 - **GPU Passthrough Support**: Full VFIO-based GPU passthrough for gaming VMs
   - Single-GPU passthrough: Pass your only GPU to a VM (requires TTY, stops display manager)
