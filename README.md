@@ -1,6 +1,6 @@
 # vm-curator
 
-A fast and friendly Rust TUI for managing QEMU/KVM virtual machines with 3D acceleration! 
+A fast and friendly Rust TUI for managing desktop QEMU/KVM virtual machines with 3D acceleration!
 
 ### Important Note ##
 
