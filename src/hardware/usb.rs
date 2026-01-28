@@ -1,5 +1,45 @@
 use anyhow::{Context, Result};
 
+/// USB version/speed classification
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum UsbVersion {
+    /// USB 1.0/1.1 (Low/Full speed - 1.5/12 Mbps)
+    Usb1,
+    /// USB 2.0 (High speed - 480 Mbps)
+    #[default]
+    Usb2,
+    /// USB 3.0+ (SuperSpeed - 5/10/20 Gbps)
+    Usb3,
+}
+
+impl UsbVersion {
+    /// Parse USB version from sysfs speed attribute value (in Mbps)
+    pub fn from_speed(speed: &str) -> Self {
+        match speed.trim() {
+            "1.5" | "12" => UsbVersion::Usb1,
+            "480" => UsbVersion::Usb2,
+            "5000" | "10000" | "20000" => UsbVersion::Usb3,
+            _ => UsbVersion::Usb2, // Default to USB 2.0 for unknown speeds
+        }
+    }
+
+    /// Parse USB version from bcdUSB attribute (e.g., "0300" for USB 3.0)
+    pub fn from_bcd_usb(bcd: u16) -> Self {
+        if bcd >= 0x0300 {
+            UsbVersion::Usb3
+        } else if bcd >= 0x0200 {
+            UsbVersion::Usb2
+        } else {
+            UsbVersion::Usb1
+        }
+    }
+
+    /// Check if this is USB 3.0 or higher
+    pub fn is_usb3(&self) -> bool {
+        matches!(self, UsbVersion::Usb3)
+    }
+}
+
 /// Represents a USB device
 #[derive(Debug, Clone)]
 pub struct UsbDevice {
@@ -14,6 +54,8 @@ pub struct UsbDevice {
     #[allow(dead_code)]
     pub dev_num: u8,
     pub device_class: u8,
+    /// USB version/speed classification
+    pub usb_version: UsbVersion,
 }
 
 impl UsbDevice {
@@ -207,6 +249,21 @@ fn enumerate_via_udev() -> Result<Vec<UsbDevice>> {
                 .and_then(|s| u8::from_str_radix(s, 16).ok())
                 .unwrap_or(0);
 
+            // Detect USB version from speed attribute first, fall back to bcdUSB
+            let usb_version = device
+                .attribute_value("speed")
+                .and_then(|v| v.to_str())
+                .map(UsbVersion::from_speed)
+                .unwrap_or_else(|| {
+                    // Fall back to bcdUSB attribute
+                    device
+                        .attribute_value("bcdDevice")
+                        .and_then(|v| v.to_str())
+                        .and_then(|s| u16::from_str_radix(s, 16).ok())
+                        .map(UsbVersion::from_bcd_usb)
+                        .unwrap_or_default()
+                });
+
             devices.push(UsbDevice {
                 vendor_id,
                 product_id,
@@ -215,6 +272,7 @@ fn enumerate_via_udev() -> Result<Vec<UsbDevice>> {
                 bus_num,
                 dev_num,
                 device_class,
+                usb_version,
             });
         }
     }
@@ -262,6 +320,15 @@ fn enumerate_via_sysfs() -> Result<Vec<UsbDevice>> {
         let dev_num = read_sysfs_decimal(&path, "devnum").unwrap_or(0) as u8;
         let device_class = read_sysfs_hex(&path, "bDeviceClass").unwrap_or(0) as u8;
 
+        // Detect USB version from speed attribute first, fall back to bcdUSB
+        let usb_version = read_sysfs_string(&path, "speed")
+            .map(|s| UsbVersion::from_speed(&s))
+            .unwrap_or_else(|| {
+                read_sysfs_hex(&path, "bcdDevice")
+                    .map(UsbVersion::from_bcd_usb)
+                    .unwrap_or_default()
+            });
+
         devices.push(UsbDevice {
             vendor_id,
             product_id,
@@ -270,6 +337,7 @@ fn enumerate_via_sysfs() -> Result<Vec<UsbDevice>> {
             bus_num,
             dev_num,
             device_class,
+            usb_version,
         });
     }
 
@@ -447,6 +515,7 @@ mod tests {
             bus_num: 1,
             dev_num: 3,
             device_class: 0,
+            usb_version: UsbVersion::Usb2,
         };
 
         assert_eq!(device.display_name(), "Logitech M105 Mouse");
@@ -463,6 +532,7 @@ mod tests {
             bus_num: 1,
             dev_num: 3,
             device_class: 0,
+            usb_version: UsbVersion::Usb2,
         };
 
         let args = device.to_qemu_args();
@@ -482,6 +552,7 @@ mod tests {
             bus_num: 1,
             dev_num: 2,
             device_class: 0,
+            usb_version: UsbVersion::Usb2,
         };
         assert!(keyboard.is_keyboard());
         assert!(!keyboard.is_mouse());
@@ -496,6 +567,7 @@ mod tests {
             bus_num: 1,
             dev_num: 2,
             device_class: 0,
+            usb_version: UsbVersion::Usb2,
         };
         assert!(mech.is_keyboard());
 
@@ -508,6 +580,7 @@ mod tests {
             bus_num: 1,
             dev_num: 2,
             device_class: 0x03, // HID class
+            usb_version: UsbVersion::Usb1,
         };
         assert!(hid_kb.is_keyboard());
     }
@@ -523,6 +596,7 @@ mod tests {
             bus_num: 1,
             dev_num: 3,
             device_class: 0,
+            usb_version: UsbVersion::Usb2,
         };
         assert!(mouse.is_mouse());
         assert!(!mouse.is_keyboard());
@@ -537,6 +611,7 @@ mod tests {
             bus_num: 1,
             dev_num: 3,
             device_class: 0,
+            usb_version: UsbVersion::Usb2,
         };
         assert!(gaming.is_mouse());
     }
@@ -551,9 +626,40 @@ mod tests {
             bus_num: 1,
             dev_num: 4,
             device_class: 0x00,
+            usb_version: UsbVersion::Usb3,
         };
         assert!(!storage.is_keyboard());
         assert!(!storage.is_mouse());
         assert!(!storage.is_input_device());
+    }
+
+    #[test]
+    fn test_usb_version_from_speed() {
+        assert_eq!(UsbVersion::from_speed("1.5"), UsbVersion::Usb1);
+        assert_eq!(UsbVersion::from_speed("12"), UsbVersion::Usb1);
+        assert_eq!(UsbVersion::from_speed("480"), UsbVersion::Usb2);
+        assert_eq!(UsbVersion::from_speed("5000"), UsbVersion::Usb3);
+        assert_eq!(UsbVersion::from_speed("10000"), UsbVersion::Usb3);
+        assert_eq!(UsbVersion::from_speed("20000"), UsbVersion::Usb3);
+        // Unknown speed defaults to USB 2.0
+        assert_eq!(UsbVersion::from_speed("unknown"), UsbVersion::Usb2);
+    }
+
+    #[test]
+    fn test_usb_version_from_bcd() {
+        assert_eq!(UsbVersion::from_bcd_usb(0x0100), UsbVersion::Usb1);
+        assert_eq!(UsbVersion::from_bcd_usb(0x0110), UsbVersion::Usb1);
+        assert_eq!(UsbVersion::from_bcd_usb(0x0200), UsbVersion::Usb2);
+        assert_eq!(UsbVersion::from_bcd_usb(0x0210), UsbVersion::Usb2);
+        assert_eq!(UsbVersion::from_bcd_usb(0x0300), UsbVersion::Usb3);
+        assert_eq!(UsbVersion::from_bcd_usb(0x0310), UsbVersion::Usb3);
+        assert_eq!(UsbVersion::from_bcd_usb(0x0320), UsbVersion::Usb3);
+    }
+
+    #[test]
+    fn test_usb_version_is_usb3() {
+        assert!(!UsbVersion::Usb1.is_usb3());
+        assert!(!UsbVersion::Usb2.is_usb3());
+        assert!(UsbVersion::Usb3.is_usb3());
     }
 }

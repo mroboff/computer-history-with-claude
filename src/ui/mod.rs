@@ -981,6 +981,7 @@ fn handle_usb_devices(app: &mut App, key: KeyEvent) -> Result<()> {
                     .map(|d| crate::vm::UsbPassthrough {
                         vendor_id: d.vendor_id,
                         product_id: d.product_id,
+                        usb_version: d.usb_version,
                     })
                     .collect();
 

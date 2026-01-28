@@ -10,6 +10,9 @@ Please see [discussion](https://github.com/mroboff/vm-curator/discussions/11) fo
 
 ### Changelog
 
+**v0.2.3**
+- Add USB 3.0 controller support for USB passthrough (xHCI controller for SuperSpeed devices)
+
 **v0.2.2**
 - Add existing disk selection to VM creation wizard (copy or move existing qcow2 files)
 - Fix Settings screen overlapping pane artifacts

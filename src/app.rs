@@ -963,6 +963,7 @@ impl App {
             .map(|d| crate::vm::UsbPassthrough {
                 vendor_id: d.vendor_id,
                 product_id: d.product_id,
+                usb_version: d.usb_version,
             })
             .collect();
 

@@ -8,6 +8,7 @@ use std::time::Duration;
 
 use super::discovery::DiscoveredVm;
 use super::qemu_config::BootMode;
+use crate::hardware::UsbVersion;
 
 /// Result of a VM launch attempt
 #[derive(Debug)]
@@ -39,17 +40,30 @@ pub struct LaunchOptions {
 pub struct UsbPassthrough {
     pub vendor_id: u16,
     pub product_id: u16,
+    pub usb_version: UsbVersion,
 }
 
 impl UsbPassthrough {
-    pub fn to_qemu_args(&self) -> Vec<String> {
-        vec![
-            "-device".to_string(),
+    /// Generate QEMU device arguments for this USB device
+    /// If `bus` is provided, attach to that specific bus (e.g., "xhci.0" for USB 3.0)
+    pub fn to_qemu_args(&self, bus: Option<&str>) -> Vec<String> {
+        let device_spec = if let Some(bus_name) = bus {
+            format!(
+                "usb-host,bus={},vendorid=0x{:04x},productid=0x{:04x}",
+                bus_name, self.vendor_id, self.product_id
+            )
+        } else {
             format!(
                 "usb-host,vendorid=0x{:04x},productid=0x{:04x}",
                 self.vendor_id, self.product_id
-            ),
-        ]
+            )
+        };
+        vec!["-device".to_string(), device_spec]
+    }
+
+    /// Check if this device is USB 3.0 or higher
+    pub fn is_usb3(&self) -> bool {
+        self.usb_version.is_usb3()
     }
 }
 
@@ -100,8 +114,20 @@ pub fn launch_vm_with_error_check(vm: &DiscoveredVm, options: &LaunchOptions) ->
     // Add USB passthrough arguments
     if !options.usb_devices.is_empty() {
         args.push("-usb".to_string());
+
+        // Check if any USB 3.0 devices are present
+        let has_usb3 = options.usb_devices.iter().any(|d| d.is_usb3());
+
+        // Add xHCI controller if USB 3.0 devices are present
+        if has_usb3 {
+            args.push("-device".to_string());
+            args.push("qemu-xhci,id=xhci".to_string());
+        }
+
+        // Add each USB device, attaching USB 3.0 devices to xHCI controller
         for usb in &options.usb_devices {
-            args.extend(usb.to_qemu_args());
+            let bus = if usb.is_usb3() { Some("xhci.0") } else { None };
+            args.extend(usb.to_qemu_args(bus));
         }
     }
 
@@ -483,11 +509,27 @@ fn generate_usb_section(devices: &[UsbPassthrough]) -> String {
     section.push('\n');
     section.push_str("USB_PASSTHROUGH_ARGS=\"-usb");
 
+    // Check if any USB 3.0 devices are present
+    let has_usb3 = devices.iter().any(|d| d.is_usb3());
+
+    // Add xHCI controller if USB 3.0 devices are present
+    if has_usb3 {
+        section.push_str(" -device qemu-xhci,id=xhci");
+    }
+
+    // Add each USB device, attaching USB 3.0 devices to xHCI controller
     for device in devices {
-        section.push_str(&format!(
-            " -device usb-host,vendorid=0x{:04x},productid=0x{:04x}",
-            device.vendor_id, device.product_id
-        ));
+        if device.is_usb3() {
+            section.push_str(&format!(
+                " -device usb-host,bus=xhci.0,vendorid=0x{:04x},productid=0x{:04x}",
+                device.vendor_id, device.product_id
+            ));
+        } else {
+            section.push_str(&format!(
+                " -device usb-host,vendorid=0x{:04x},productid=0x{:04x}",
+                device.vendor_id, device.product_id
+            ));
+        }
     }
 
     section.push_str("\"\n");
@@ -604,15 +646,24 @@ fn parse_usb_section(content: &str) -> Vec<UsbPassthrough> {
         if in_usb_section && line.contains("USB_PASSTHROUGH_ARGS=") {
             // Parse the USB args line
             // Format: USB_PASSTHROUGH_ARGS="-usb -device usb-host,vendorid=0x1234,productid=0x5678 ..."
+            // Or with xHCI: USB_PASSTHROUGH_ARGS="-usb -device qemu-xhci,id=xhci -device usb-host,bus=xhci.0,vendorid=0x1234,productid=0x5678 ..."
             for part in line.split("-device usb-host,") {
                 if part.contains("vendorid=") && part.contains("productid=") {
                     if let (Some(vid), Some(pid)) = (
                         extract_hex_value(part, "vendorid="),
                         extract_hex_value(part, "productid="),
                     ) {
+                        // Detect USB version from bus assignment
+                        // If attached to xhci.0, it's USB 3.0; otherwise default to USB 2.0
+                        let usb_version = if part.contains("bus=xhci") {
+                            UsbVersion::Usb3
+                        } else {
+                            UsbVersion::Usb2
+                        };
                         devices.push(UsbPassthrough {
                             vendor_id: vid,
                             product_id: pid,
+                            usb_version,
                         });
                     }
                 }
