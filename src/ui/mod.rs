@@ -352,6 +352,11 @@ fn render(app: &App, frame: &mut Frame) {
             render_dim_overlay(frame);
             screens::single_gpu_setup::render_instructions(app, frame);
         }
+        Screen::MultiGpuSetup => {
+            screens::main_menu::render(app, frame);
+            render_dim_overlay(frame);
+            screens::multi_gpu_setup::render(app, frame);
+        }
         Screen::Confirm(action) => {
             screens::main_menu::render(app, frame);
             render_dim_overlay(frame);
@@ -432,6 +437,7 @@ fn handle_key(app: &mut App, key: KeyEvent) -> Result<()> {
         Screen::PciPassthrough => screens::pci_passthrough::handle_key(app, key)?,
         Screen::SingleGpuSetup => screens::single_gpu_setup::handle_key(app, key)?,
         Screen::SingleGpuInstructions => handle_single_gpu_instructions(app, key)?,
+        Screen::MultiGpuSetup => screens::multi_gpu_setup::handle_input(app, key)?,
         Screen::Confirm(action) => handle_confirm(app, action.clone(), key)?,
         Screen::Help => handle_help(app, key)?,
         Screen::Search => handle_search(app, key)?,
@@ -548,6 +554,11 @@ fn handle_management(app: &mut App, key: KeyEvent) -> Result<()> {
                             app.load_pci_devices()?;
                             app.selected_menu_item = 0;
                             app.push_screen(Screen::PciPassthrough);
+                        }
+                        MenuAction::MultiGpuPassthrough => {
+                            // Load PCI devices for multi-GPU setup
+                            app.load_pci_devices()?;
+                            app.push_screen(Screen::MultiGpuSetup);
                         }
                         MenuAction::SingleGpuPassthrough => {
                             // Load PCI devices and initialize single GPU config
@@ -980,11 +991,30 @@ fn handle_usb_devices(app: &mut App, key: KeyEvent) -> Result<()> {
                     Ok(()) => {
                         // Reload the script so changes are visible in raw script viewer
                         app.reload_selected_vm_script();
-                        if count > 0 {
-                            app.set_status(format!("Saved {} USB device(s) to launch.sh", count));
+
+                        let mut status_msg = if count > 0 {
+                            format!("Saved {} USB device(s) to launch.sh", count)
                         } else {
-                            app.set_status("Cleared USB passthrough from launch.sh");
+                            "Cleared USB passthrough from launch.sh".to_string()
+                        };
+
+                        // Regenerate single-GPU scripts if they exist
+                        // USB devices are important for single-GPU since there's no graphical session
+                        if let (Some(vm), Some(config)) = (app.selected_vm(), app.single_gpu_config.as_ref()) {
+                            if crate::hardware::scripts_exist(&vm.path) {
+                                match crate::vm::single_gpu_scripts::regenerate_if_exists(vm, config) {
+                                    Ok(true) => {
+                                        status_msg.push_str("; single-GPU scripts regenerated");
+                                    }
+                                    Ok(false) => {} // Scripts don't exist, nothing to regenerate
+                                    Err(e) => {
+                                        status_msg.push_str(&format!("; warning: failed to regenerate single-GPU scripts: {}", e));
+                                    }
+                                }
+                            }
                         }
+
+                        app.set_status(status_msg);
                     }
                     Err(e) => {
                         app.set_status(format!("Error saving USB config: {}", e));

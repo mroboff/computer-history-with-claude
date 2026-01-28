@@ -236,13 +236,19 @@ impl PciDevice {
     }
 
     /// Generate QEMU vfio-pci passthrough arguments
+    ///
+    /// Note: x-vga=on is NOT used because it's incompatible with modern NVIDIA GPUs
+    /// (RTX 4xxx series and newer). The GPU will output to its physical display ports
+    /// without needing this legacy VGA compatibility flag.
     pub fn to_qemu_args(&self, is_primary_gpu: bool) -> Vec<String> {
         let mut args = vec!["-device".to_string()];
 
         let mut device_str = format!("vfio-pci,host={}", self.address);
 
+        // For GPUs with companion audio devices (same IOMMU group), use multifunction
+        // to present them as a single multi-function device
         if is_primary_gpu && self.is_gpu() {
-            device_str.push_str(",multifunction=on,x-vga=on");
+            device_str.push_str(",multifunction=on");
         }
 
         args.push(device_str);
@@ -761,7 +767,8 @@ mod tests {
         let args = generate_passthrough_args(&devices);
 
         assert_eq!(args.len(), 4); // 2 devices, each with 2 args
-        assert!(args[1].contains("multifunction=on,x-vga=on")); // Primary GPU
-        assert!(!args[3].contains("x-vga")); // Audio device
+        assert!(args[1].contains("multifunction=on")); // Primary GPU
+        assert!(!args[1].contains("x-vga")); // No x-vga (incompatible with modern NVIDIA)
+        assert!(!args[3].contains("x-vga")); // Audio device also no x-vga
     }
 }

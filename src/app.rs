@@ -5,7 +5,7 @@ use std::time::Instant;
 
 use crate::config::Config;
 use crate::hardware::{GpuPassthroughStatus, PciDevice, SingleGpuConfig, UsbDevice};
-use crate::metadata::{AsciiArtStore, HierarchyConfig, MetadataStore, OsInfo, QemuProfileStore};
+use crate::metadata::{AsciiArtStore, HierarchyConfig, MetadataStore, OsInfo, QemuProfileStore, SettingsHelpStore};
 use crate::ui::widgets::build_visual_order;
 use crate::vm::{discover_vms, BootMode, DiscoveredVm, LaunchOptions, Snapshot};
 
@@ -38,6 +38,8 @@ pub enum Screen {
     SingleGpuSetup,
     /// Single GPU passthrough instructions dialog
     SingleGpuInstructions,
+    /// Multi-GPU passthrough setup (Looking Glass)
+    MultiGpuSetup,
     /// Confirmation dialog
     Confirm(ConfirmAction),
     /// Help screen
@@ -564,6 +566,8 @@ pub struct App {
     pub script_editor_h_scroll: usize,
     /// QEMU profiles for VM creation
     pub qemu_profiles: QemuProfileStore,
+    /// Settings help text store
+    pub settings_help: SettingsHelpStore,
     /// VM creation wizard state
     pub wizard_state: Option<CreateWizardState>,
     /// Settings screen selected item
@@ -572,6 +576,8 @@ pub struct App {
     pub settings_editing: bool,
     /// Settings screen edit buffer (for text fields)
     pub settings_edit_buffer: String,
+    /// GPU passthrough validation result for settings screen
+    pub settings_gpu_validation: Option<crate::ui::screens::settings::GpuValidationResult>,
 
     // === Single GPU Passthrough ===
     /// Single GPU passthrough configuration
@@ -640,6 +646,11 @@ impl App {
         let user_profiles_path = config_dir.join("qemu_profiles.toml");
         qemu_profiles.load_user_overrides(&user_profiles_path);
 
+        // Load settings help text
+        let mut settings_help = SettingsHelpStore::load_embedded();
+        let user_help_path = config_dir.join("settings_help.toml");
+        settings_help.load_user_overrides(&user_help_path);
+
         // Step 6: Build visual order
         progress(6, TOTAL_STEPS, "Building VM list...");
         let filtered_indices: Vec<usize> = (0..vms.len()).collect();
@@ -687,10 +698,12 @@ impl App {
             script_editor_modified: false,
             script_editor_h_scroll: 0,
             qemu_profiles,
+            settings_help,
             wizard_state: None,
             settings_selected: 0,
             settings_editing: false,
             settings_edit_buffer: String::new(),
+            settings_gpu_validation: None,
 
             // Single GPU Passthrough
             single_gpu_config: None,

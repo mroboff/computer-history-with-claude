@@ -161,6 +161,9 @@ impl LookingGlassConfig {
 }
 
 /// Single GPU passthrough configuration
+///
+/// Note: Looking Glass is NOT used for single-GPU passthrough because the display
+/// goes directly to physical monitors connected to the passed-through GPU.
 #[derive(Debug, Clone)]
 pub struct SingleGpuConfig {
     /// The GPU device to pass through
@@ -173,8 +176,6 @@ pub struct SingleGpuConfig {
     pub original_driver: GpuDriver,
     /// Detected display manager
     pub display_manager: DisplayManager,
-    /// Looking Glass configuration
-    pub looking_glass: LookingGlassConfig,
 }
 
 impl SingleGpuConfig {
@@ -184,7 +185,6 @@ impl SingleGpuConfig {
         let iommu_group_devices = super::pci::find_iommu_group_devices(&gpu);
         let original_driver = detect_gpu_driver(&gpu);
         let display_manager = detect_display_manager();
-        let looking_glass = LookingGlassConfig::default();
 
         Self {
             gpu,
@@ -192,7 +192,6 @@ impl SingleGpuConfig {
             iommu_group_devices,
             original_driver,
             display_manager,
-            looking_glass,
         }
     }
 
@@ -203,19 +202,6 @@ impl SingleGpuConfig {
             addrs.push(audio.address.as_str());
         }
         addrs
-    }
-
-    /// Check if Looking Glass is properly configured
-    pub fn is_looking_glass_ready(&self) -> bool {
-        if !self.looking_glass.enabled {
-            return false;
-        }
-        // Check if client exists (if auto-launch is enabled)
-        if self.looking_glass.auto_launch_client {
-            return self.looking_glass.client_path.is_some()
-                || LookingGlassConfig::find_client().is_some();
-        }
-        true
     }
 }
 

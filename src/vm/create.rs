@@ -10,6 +10,63 @@ use std::path::{Path, PathBuf};
 use crate::app::{CreateWizardState, WizardQemuConfig};
 use crate::commands::qemu_img;
 
+/// Generate a random UUID for SMBIOS
+fn generate_uuid() -> String {
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    // Use time-based pseudo-random generation
+    let seed = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+
+    // Simple LCG for pseudo-random bytes
+    let mut state = seed as u64;
+    let mut bytes = [0u8; 16];
+    for byte in &mut bytes {
+        state = state.wrapping_mul(6364136223846793005).wrapping_add(1);
+        *byte = (state >> 33) as u8;
+    }
+
+    // Set version 4 (random) and variant 1
+    bytes[6] = (bytes[6] & 0x0f) | 0x40;
+    bytes[8] = (bytes[8] & 0x3f) | 0x80;
+
+    format!(
+        "{:02x}{:02x}{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}",
+        bytes[0], bytes[1], bytes[2], bytes[3],
+        bytes[4], bytes[5],
+        bytes[6], bytes[7],
+        bytes[8], bytes[9],
+        bytes[10], bytes[11], bytes[12], bytes[13], bytes[14], bytes[15]
+    )
+}
+
+/// Generate a consumer-like serial number (not corporate format)
+fn generate_serial() -> String {
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    let seed = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+
+    // Mix in process ID and thread for more entropy
+    let seed = seed ^ (std::process::id() as u128) ^ (seed >> 64);
+
+    let chars: Vec<char> = "0123456789ABCDEFGHJKLMNPQRSTUVWXYZ".chars().collect();
+    let mut state = seed as u64;
+    let mut serial = String::with_capacity(12);
+
+    for _ in 0..12 {
+        state = state.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        let idx = ((state >> 33) as usize) % chars.len();
+        serial.push(chars[idx]);
+    }
+
+    serial
+}
+
 /// Known OVMF firmware paths across different Linux distributions
 const OVMF_SEARCH_PATHS: &[&str] = &[
     // Arch Linux (current naming with .4m suffix for 4MB variant)
@@ -80,12 +137,13 @@ pub fn create_vm(library_path: &Path, state: &CreateWizardState) -> Result<Creat
     let disk_filename = format!("{}.qcow2", state.folder_name);
     let disk_path = create_disk_image(&vm_dir, &disk_filename, state.disk_size_gb)?;
 
-    // Generate and write launch script
-    let script_content = generate_launch_script(
+    // Generate and write launch script with OS-awareness
+    let script_content = generate_launch_script_with_os(
         &state.vm_name,
         &disk_filename,
         state.iso_path.as_deref(),
         &state.qemu_config,
+        state.selected_os.as_deref(),
     );
     let launch_script_path = write_launch_script(&vm_dir, &script_content)?;
 
@@ -142,6 +200,143 @@ pub fn create_disk_image(vm_dir: &Path, filename: &str, size_gb: u32) -> Result<
     Ok(disk_path)
 }
 
+/// Check if an OS profile is Windows 10 or 11
+fn is_windows_10_or_11(os_profile: Option<&str>) -> bool {
+    matches!(os_profile, Some("windows-10") | Some("windows-11"))
+}
+
+/// Check if an OS profile is Windows 11 specifically
+fn is_windows_11(os_profile: Option<&str>) -> bool {
+    matches!(os_profile, Some("windows-11"))
+}
+
+/// Generate SMBIOS options for Windows to avoid corporate machine detection
+fn generate_smbios_options() -> String {
+    let uuid = generate_uuid();
+    let system_serial = generate_serial();
+    let board_serial = generate_serial();
+
+    // Consumer-style SMBIOS that doesn't trigger corporate machine detection
+    // Type 1: System Information
+    // Type 2: Baseboard Information
+    format!(r#"# SMBIOS configuration (unique per VM to avoid Windows corporate detection)
+SMBIOS_OPTS=(
+    -smbios "type=1,manufacturer=QEMU,product=Standard PC,version=1.0,serial={system_serial},uuid={uuid}"
+    -smbios "type=2,manufacturer=QEMU,product=Standard PC,version=1.0,serial={board_serial}"
+)
+"#,
+        system_serial = system_serial,
+        uuid = uuid,
+        board_serial = board_serial,
+    )
+}
+
+/// Generate TPM setup functions for Windows 11
+fn generate_tpm_functions() -> String {
+    r#"# TPM 2.0 emulation functions (required for Windows 11)
+TPM_DIR="$VM_DIR/tpm"
+
+init_tpm() {
+    if [[ ! -d "$TPM_DIR" ]]; then
+        echo "Initializing TPM state directory..."
+        mkdir -p "$TPM_DIR"
+        swtpm_setup --tpmstate "$TPM_DIR" \
+            --tpm2 \
+            --create-ek-cert \
+            --create-platform-cert \
+            --allow-signing \
+            --decryption \
+            --overwrite
+    fi
+}
+
+start_tpm() {
+    # Initialize TPM if needed
+    init_tpm
+
+    # Kill any existing swtpm for this VM
+    pkill -f "swtpm.*$TPM_DIR" 2>/dev/null || true
+    sleep 0.5
+
+    echo "Starting TPM emulator..."
+    swtpm socket \
+        --tpmstate dir="$TPM_DIR" \
+        --ctrl type=unixio,path="$TPM_DIR/swtpm-sock" \
+        --tpm2 \
+        --daemon
+    sleep 1
+
+    if [[ ! -S "$TPM_DIR/swtpm-sock" ]]; then
+        echo "Error: TPM socket not created"
+        exit 1
+    fi
+}
+
+stop_tpm() {
+    pkill -f "swtpm.*$TPM_DIR" 2>/dev/null || true
+}
+
+# Cleanup TPM on exit
+cleanup() {
+    stop_tpm
+}
+trap cleanup EXIT
+
+"#.to_string()
+}
+
+/// Generate OVMF variables setup for UEFI
+fn generate_ovmf_vars_setup() -> String {
+    // Find OVMF_VARS template
+    let ovmf_vars_template = find_ovmf_vars_template()
+        .unwrap_or_else(|| "/usr/share/OVMF/OVMF_VARS.fd".to_string());
+
+    format!(r#"# UEFI variables (writable copy per VM)
+OVMF_VARS_TEMPLATE="{template}"
+OVMF_VARS="$VM_DIR/OVMF_VARS.fd"
+
+# Create a writable copy of OVMF_VARS if it doesn't exist
+if [[ ! -f "$OVMF_VARS" ]]; then
+    if [[ -f "$OVMF_VARS_TEMPLATE" ]]; then
+        echo "Creating UEFI variables file..."
+        cp "$OVMF_VARS_TEMPLATE" "$OVMF_VARS"
+    else
+        echo "Warning: OVMF_VARS template not found at $OVMF_VARS_TEMPLATE"
+        echo "UEFI variables may not persist across reboots"
+    fi
+fi
+
+"#, template = ovmf_vars_template)
+}
+
+/// Find OVMF_VARS template path
+fn find_ovmf_vars_template() -> Option<String> {
+    let search_paths = [
+        // Arch Linux (4M variant for modern UEFI)
+        "/usr/share/edk2/x64/OVMF_VARS.4m.fd",
+        "/usr/share/edk2-ovmf/x64/OVMF_VARS.4m.fd",
+        "/usr/share/OVMF/x64/OVMF_VARS.4m.fd",
+        // Arch Linux (legacy)
+        "/usr/share/edk2-ovmf/x64/OVMF_VARS.fd",
+        "/usr/share/edk2/x64/OVMF_VARS.fd",
+        // Debian/Ubuntu
+        "/usr/share/OVMF/OVMF_VARS.fd",
+        "/usr/share/OVMF/OVMF_VARS_4M.fd",
+        // Fedora/RHEL
+        "/usr/share/edk2/ovmf/OVMF_VARS.fd",
+        // Generic
+        "/usr/share/ovmf/OVMF_VARS.fd",
+        "/usr/share/qemu/OVMF_VARS.fd",
+    ];
+
+    for path in search_paths {
+        if Path::new(path).exists() {
+            return Some(path.to_string());
+        }
+    }
+    None
+}
+
 /// Generate the launch.sh script content
 pub fn generate_launch_script(
     vm_name: &str,
@@ -149,7 +344,22 @@ pub fn generate_launch_script(
     iso_path: Option<&Path>,
     config: &WizardQemuConfig,
 ) -> String {
+    generate_launch_script_with_os(vm_name, disk_filename, iso_path, config, None)
+}
+
+/// Generate the launch.sh script content with OS profile awareness
+pub fn generate_launch_script_with_os(
+    vm_name: &str,
+    disk_filename: &str,
+    iso_path: Option<&Path>,
+    config: &WizardQemuConfig,
+    os_profile: Option<&str>,
+) -> String {
     let mut script = String::new();
+
+    let is_windows = is_windows_10_or_11(os_profile);
+    let needs_tpm = config.tpm || is_windows_11(os_profile);
+    let needs_uefi = config.uefi || is_windows_11(os_profile);
 
     // Shebang and header
     script.push_str("#!/bin/bash\n\n");
@@ -158,6 +368,12 @@ pub fn generate_launch_script(
         "# {} CPUs, {}MB RAM, {} graphics, {} disk interface\n",
         config.cpu_cores, config.memory_mb, config.vga, config.disk_interface
     ));
+    if is_windows {
+        script.push_str("# Windows VM with unique SMBIOS identifiers\n");
+    }
+    if needs_tpm {
+        script.push_str("# TPM 2.0 enabled (requires swtpm package)\n");
+    }
     script.push_str("# Generated by vm-curator\n\n");
 
     // Variables
@@ -171,6 +387,21 @@ pub fn generate_launch_script(
     }
     script.push('\n');
 
+    // Windows-specific: SMBIOS options
+    if is_windows {
+        script.push_str(&generate_smbios_options());
+    }
+
+    // UEFI setup with writable OVMF_VARS
+    if needs_uefi {
+        script.push_str(&generate_ovmf_vars_setup());
+    }
+
+    // TPM functions
+    if needs_tpm {
+        script.push_str(&generate_tpm_functions());
+    }
+
     // Help function
     script.push_str("show_help() {\n");
     script.push_str("    echo \"Usage: $0 [OPTIONS]\"\n");
@@ -181,9 +412,9 @@ pub fn generate_launch_script(
     script.push_str("    echo \"  (no options)     Normal boot from hard disk\"\n");
     script.push_str("}\n\n");
 
-    // Build the base QEMU command
-    let base_cmd = build_qemu_command(config, disk_filename, false, None);
-    let install_cmd = build_qemu_command(config, disk_filename, true, None);
+    // Build QEMU commands with OS-awareness
+    let base_cmd = build_qemu_command_with_os(config, disk_filename, false, None, os_profile);
+    let install_cmd = build_qemu_command_with_os(config, disk_filename, true, None, os_profile);
 
     // Main script logic
     script.push_str("case \"$1\" in\n");
@@ -193,8 +424,14 @@ pub fn generate_launch_script(
     script.push_str("            echo \"Please edit this script to set the ISO path or use --cdrom\"\n");
     script.push_str("            exit 1\n");
     script.push_str("        fi\n");
-    script.push_str(&format!("        echo \"Booting from installation ISO...\"\n"));
-    script.push_str(&format!("        exec {}\n", install_cmd));
+    script.push_str("        echo \"Booting from installation ISO...\"\n");
+
+    // Start TPM before QEMU if needed
+    if needs_tpm {
+        script.push_str("        start_tpm\n");
+    }
+
+    script.push_str(&format!("        {}\n", install_cmd));
     script.push_str("        ;;\n");
     script.push_str("    --cdrom)\n");
     script.push_str("        if [[ -z \"$2\" ]] || [[ ! -f \"$2\" ]]; then\n");
@@ -203,9 +440,13 @@ pub fn generate_launch_script(
     script.push_str("        fi\n");
     script.push_str("        echo \"Booting with CD-ROM: $2\"\n");
 
+    if needs_tpm {
+        script.push_str("        start_tpm\n");
+    }
+
     // Build command for custom ISO (will substitute $2)
-    let cdrom_cmd = build_qemu_command(config, disk_filename, true, Some("\"$2\""));
-    script.push_str(&format!("        exec {}\n", cdrom_cmd));
+    let cdrom_cmd = build_qemu_command_with_os(config, disk_filename, true, Some("\"$2\""), os_profile);
+    script.push_str(&format!("        {}\n", cdrom_cmd));
     script.push_str("        ;;\n");
     script.push_str("    --help|-h)\n");
     script.push_str("        show_help\n");
@@ -213,7 +454,12 @@ pub fn generate_launch_script(
     script.push_str("        ;;\n");
     script.push_str("    \"\")\n");
     script.push_str(&format!("        echo \"Booting {}...\"\n", vm_name));
-    script.push_str(&format!("        exec {}\n", base_cmd));
+
+    if needs_tpm {
+        script.push_str("        start_tpm\n");
+    }
+
+    script.push_str(&format!("        {}\n", base_cmd));
     script.push_str("        ;;\n");
     script.push_str("    *)\n");
     script.push_str("        echo \"Unknown option: $1\"\n");
@@ -225,14 +471,29 @@ pub fn generate_launch_script(
     script
 }
 
-/// Build the QEMU command string
+/// Build the QEMU command string (legacy wrapper)
 fn build_qemu_command(
+    config: &WizardQemuConfig,
+    disk_filename: &str,
+    with_cdrom: bool,
+    custom_iso: Option<&str>,
+) -> String {
+    build_qemu_command_with_os(config, disk_filename, with_cdrom, custom_iso, None)
+}
+
+/// Build the QEMU command string with OS-awareness
+fn build_qemu_command_with_os(
     config: &WizardQemuConfig,
     _disk_filename: &str,
     with_cdrom: bool,
     custom_iso: Option<&str>,
+    os_profile: Option<&str>,
 ) -> String {
     let mut args: Vec<String> = Vec::new();
+
+    let is_windows = is_windows_10_or_11(os_profile);
+    let needs_tpm = config.tpm || is_windows_11(os_profile);
+    let needs_uefi = config.uefi || is_windows_11(os_profile);
 
     // Emulator
     args.push(config.emulator.clone());
@@ -264,6 +525,24 @@ fn build_qemu_command(
 
     // Memory
     args.push(format!("-m {}M", config.memory_mb));
+
+    // SMBIOS options for Windows (reference the variable defined in script)
+    if is_windows {
+        args.push("\"${SMBIOS_OPTS[@]}\"".to_string());
+    }
+
+    // UEFI boot with writable OVMF_VARS
+    if needs_uefi {
+        let ovmf_code = find_ovmf_code_path()
+            .unwrap_or_else(|| "/usr/share/OVMF/OVMF_CODE.fd".to_string());
+        // OVMF_CODE is read-only
+        args.push(format!(
+            "-drive if=pflash,format=raw,readonly=on,file={}",
+            ovmf_code
+        ));
+        // OVMF_VARS is writable (uses variable set up in script)
+        args.push("-drive if=pflash,format=raw,file=\"$OVMF_VARS\"".to_string());
+    }
 
     // Disk
     args.push(format!(
@@ -338,20 +617,9 @@ fn build_qemu_command(
         args.push("-rtc base=localtime".to_string());
     }
 
-    // UEFI boot
-    if config.uefi {
-        // Try to find OVMF firmware at common paths
-        let ovmf_path = find_ovmf_code_path()
-            .unwrap_or_else(|| "/usr/share/OVMF/OVMF_CODE.fd".to_string());
-        args.push(format!(
-            "-drive if=pflash,format=raw,readonly=on,file={}",
-            ovmf_path
-        ));
-    }
-
-    // TPM (if enabled, requires swtpm running)
-    if config.tpm {
-        args.push("-chardev socket,id=chrtpm,path=/tmp/swtpm-sock".to_string());
+    // TPM 2.0 (if enabled, uses socket set up by start_tpm function)
+    if needs_tpm {
+        args.push("-chardev socket,id=chrtpm,path=\"$TPM_DIR/swtpm-sock\"".to_string());
         args.push("-tpmdev emulator,id=tpm0,chardev=chrtpm".to_string());
         args.push("-device tpm-tis,tpmdev=tpm0".to_string());
     }

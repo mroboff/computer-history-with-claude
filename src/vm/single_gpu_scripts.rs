@@ -2,13 +2,17 @@
 //!
 //! Generates scripts for single GPU passthrough scenarios where the user's primary
 //! GPU is passed to a VM, requiring the display manager to be stopped.
+//!
+//! For single-GPU passthrough, Looking Glass is NOT used because the display
+//! goes directly to physical monitors connected to the passed-through GPU.
 
 use anyhow::{Context, Result};
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 
-use crate::hardware::{LookingGlassConfig, SingleGpuConfig};
+use crate::hardware::SingleGpuConfig;
+use crate::vm::lifecycle::load_usb_passthrough;
 use crate::vm::DiscoveredVm;
 
 /// Generated scripts for single GPU passthrough
@@ -18,8 +22,122 @@ pub struct GeneratedScripts {
     pub start_script: PathBuf,
     /// Path to the restore script
     pub restore_script: PathBuf,
-    /// Path to the setup script
-    pub setup_script: PathBuf,
+}
+
+/// Components extracted from the VM's launch.sh script
+#[derive(Debug, Default)]
+struct LaunchScriptComponents {
+    /// DISK variable definition (e.g., DISK="$VM_DIR/disk.qcow2")
+    disk_var: Option<String>,
+    /// ISO variable definition
+    iso_var: Option<String>,
+    /// OVMF_CODE path
+    ovmf_code: Option<String>,
+    /// OVMF_VARS path (editable copy)
+    ovmf_vars: Option<String>,
+    /// TPM directory path
+    tpm_dir: Option<String>,
+    /// Whether TPM is enabled
+    has_tpm: bool,
+    /// Whether UEFI is enabled
+    has_uefi: bool,
+    /// SMBIOS_OPTS array definition
+    smbios_opts: Option<String>,
+    /// USB passthrough devices
+    usb_devices: Vec<(u16, u16)>, // (vendor_id, product_id)
+}
+
+/// Parse the launch.sh script to extract important components
+fn parse_launch_script(content: &str) -> LaunchScriptComponents {
+    let mut components = LaunchScriptComponents::default();
+    let lines: Vec<&str> = content.lines().collect();
+    let mut i = 0;
+
+    while i < lines.len() {
+        let trimmed = lines[i].trim();
+
+        // Check for DISK variable
+        if trimmed.starts_with("DISK=") {
+            components.disk_var = Some(trimmed.to_string());
+        }
+
+        // Check for ISO variable
+        if trimmed.starts_with("ISO=") {
+            components.iso_var = Some(trimmed.to_string());
+        }
+
+        // Check for OVMF paths
+        if trimmed.starts_with("OVMF_CODE=") {
+            if let Some(path) = extract_quoted_value(trimmed, "OVMF_CODE=") {
+                components.ovmf_code = Some(path);
+            }
+        }
+        if trimmed.starts_with("OVMF_VARS=") {
+            if let Some(path) = extract_quoted_value(trimmed, "OVMF_VARS=") {
+                components.ovmf_vars = Some(path);
+            }
+        }
+
+        // Check for TPM
+        if trimmed.starts_with("TPM_DIR=") {
+            if let Some(path) = extract_quoted_value(trimmed, "TPM_DIR=") {
+                components.tpm_dir = Some(path);
+            }
+            components.has_tpm = true;
+        }
+        if trimmed.contains("-tpmdev") || trimmed.contains("swtpm") {
+            components.has_tpm = true;
+        }
+
+        // Check for UEFI
+        if trimmed.contains("OVMF") || trimmed.contains("pflash") {
+            components.has_uefi = true;
+        }
+
+        // Check for SMBIOS_OPTS (may be multi-line array)
+        if trimmed.starts_with("SMBIOS_OPTS=(") {
+            // Multi-line array - collect until closing )
+            let mut smbios_block = String::new();
+            smbios_block.push_str(lines[i]);
+            smbios_block.push('\n');
+
+            // Check if array closes on same line
+            if !trimmed.ends_with(')') || trimmed == "SMBIOS_OPTS=(" {
+                i += 1;
+                while i < lines.len() {
+                    smbios_block.push_str(lines[i]);
+                    smbios_block.push('\n');
+                    if lines[i].trim().ends_with(')') {
+                        break;
+                    }
+                    i += 1;
+                }
+            }
+            components.smbios_opts = Some(smbios_block);
+        } else if trimmed.starts_with("SMBIOS_OPTS=") {
+            // Single-line assignment
+            components.smbios_opts = Some(trimmed.to_string());
+        }
+
+        i += 1;
+    }
+
+    components
+}
+
+/// Extract a quoted value from a variable assignment
+fn extract_quoted_value(line: &str, prefix: &str) -> Option<String> {
+    let rest = line.strip_prefix(prefix)?;
+    let rest = rest.trim();
+    if rest.starts_with('"') && rest.len() > 1 {
+        let end = rest[1..].find('"').map(|i| i + 1)?;
+        Some(rest[1..end].to_string())
+    } else if rest.starts_with('\'') && rest.len() > 1 {
+        let end = rest[1..].find('\'').map(|i| i + 1)?;
+        Some(rest[1..end].to_string())
+    } else {
+        Some(rest.split_whitespace().next()?.to_string())
+    }
 }
 
 /// Generate all single GPU passthrough scripts for a VM
@@ -35,19 +153,16 @@ pub fn generate_single_gpu_scripts(
     write_executable_script(&start_path, &start_content)?;
 
     // Generate the restore script
-    let restore_content = generate_restore_script(config);
+    let restore_content = generate_restore_script(vm, config);
     let restore_path = vm_dir.join("single-gpu-restore.sh");
     write_executable_script(&restore_path, &restore_content)?;
 
-    // Generate the setup script
-    let setup_content = generate_setup_script(config);
-    let setup_path = vm_dir.join("single-gpu-setup.sh");
-    write_executable_script(&setup_path, &setup_content)?;
+    // Note: System setup (VFIO modules, initramfs) is done once via Settings,
+    // not per-VM. The setup functionality is in run_system_setup().
 
     Ok(GeneratedScripts {
         start_script: start_path,
         restore_script: restore_path,
-        setup_script: setup_path,
     })
 }
 
@@ -72,6 +187,11 @@ fn generate_start_script(vm: &DiscoveredVm, config: &SingleGpuConfig) -> Result<
     let vm_dir = vm.path.display();
     let vm_name = vm.display_name();
 
+    // Read and parse the launch script
+    let launch_script = fs::read_to_string(&vm.launch_script)
+        .with_context(|| format!("Failed to read launch script: {:?}", vm.launch_script))?;
+    let components = parse_launch_script(&launch_script);
+
     // Get dependent modules to unload
     let modules_to_unload = config.original_driver.dependent_modules();
     let unload_modules_cmd = if !modules_to_unload.is_empty() {
@@ -84,20 +204,49 @@ fn generate_start_script(vm: &DiscoveredVm, config: &SingleGpuConfig) -> Result<
         "    # No additional modules to unload".to_string()
     };
 
-    // Looking Glass configuration
-    let looking_glass_enabled = config.looking_glass.enabled;
-    let ivshmem_size = config.looking_glass.ivshmem_size_mb;
-    let lg_auto_launch = config.looking_glass.auto_launch_client;
-    let lg_client = config
-        .looking_glass
-        .client_path
-        .as_ref()
-        .map(|p| p.display().to_string())
-        .or_else(|| LookingGlassConfig::find_client().map(|p| p.display().to_string()))
-        .unwrap_or_else(|| "looking-glass-client".to_string());
+    // Load USB passthrough from launch.sh
+    let usb_devices = load_usb_passthrough(vm);
+    let usb_passthrough_args = generate_usb_passthrough_args(&usb_devices);
 
     // Build QEMU command from existing launch.sh
-    let qemu_command = extract_qemu_command_for_passthrough(vm, config)?;
+    let qemu_command = extract_qemu_command_for_passthrough(vm, config, &components, &usb_passthrough_args)?;
+
+    // Generate variable definitions
+    let variable_defs = generate_variable_definitions(vm, &components);
+
+    // Generate TPM functions if TPM is enabled
+    let tpm_functions = if components.has_tpm {
+        generate_tpm_functions(&components)
+    } else {
+        String::new()
+    };
+
+    // Generate TPM start call
+    let tpm_start = if components.has_tpm {
+        r#"
+# Start TPM emulator
+start_tpm
+"#.to_string()
+    } else {
+        String::new()
+    };
+
+    // Generate cleanup for NVIDIA module loading
+    let nvidia_module_load = if original_driver == "nvidia" {
+        r#"
+    # Load NVIDIA modules in dependency order
+    modprobe nvidia 2>/dev/null || true
+    sleep 1
+    modprobe nvidia_modeset 2>/dev/null || true
+    sleep 0.5
+    modprobe nvidia_drm 2>/dev/null || true
+    modprobe nvidia_uvm 2>/dev/null || true
+    sleep 1"#.to_string()
+    } else {
+        format!(r#"
+    modprobe "{}" 2>/dev/null || true
+    sleep 1"#, original_driver)
+    };
 
     let script = format!(
         r#"#!/bin/bash
@@ -107,11 +256,13 @@ fn generate_start_script(vm: &DiscoveredVm, config: &SingleGpuConfig) -> Result<
 # This script must be run from a TTY (Ctrl+Alt+F3), not from a graphical terminal.
 # It will stop your display manager, pass your GPU to the VM, and restore
 # the display when the VM exits.
+#
+# For single-GPU passthrough, the VM's display goes directly to physical monitors.
 
 set -e
 
 # ============================================================================
-# Configuration (do not edit unless you know what you're doing)
+# Configuration
 # ============================================================================
 VM_DIR="{vm_dir}"
 VM_NAME="{vm_name}"
@@ -119,11 +270,7 @@ GPU_ADDR="{gpu_addr}"
 AUDIO_ADDR="{audio_addr}"
 ORIGINAL_DRIVER="{original_driver}"
 DISPLAY_MANAGER="{display_manager}"
-LOOKING_GLASS_ENABLED="{looking_glass_enabled}"
-IVSHMEM_SIZE="{ivshmem_size}M"
-LG_AUTO_LAUNCH="{lg_auto_launch}"
-LG_CLIENT="{lg_client}"
-
+{variable_defs}
 # ============================================================================
 # Safety Checks
 # ============================================================================
@@ -148,10 +295,10 @@ fi
 # Check that VFIO modules are available
 if ! modinfo vfio_pci &>/dev/null; then
     echo "ERROR: vfio_pci module not available"
-    echo "Run the setup script first: $VM_DIR/single-gpu-setup.sh"
+    echo "Run System Setup from vm-curator Settings > Single GPU Passthrough"
     exit 1
 fi
-
+{tpm_functions}
 # ============================================================================
 # Cleanup Function
 # ============================================================================
@@ -161,31 +308,35 @@ cleanup() {{
     echo ""
     echo "Cleaning up and restoring display..."
 
-    # Unbind from vfio-pci
-    if [[ -e "/sys/bus/pci/drivers/vfio-pci/$GPU_ADDR" ]]; then
-        echo "$GPU_ADDR" > /sys/bus/pci/drivers/vfio-pci/unbind 2>/dev/null || true
+    # Kill any lingering QEMU processes for this VM
+    pkill -f "qemu.*$VM_NAME" 2>/dev/null || true
+{tpm_cleanup}
+    # Unbind from vfio-pci using PCI remove+rescan pattern
+    if [[ -e "/sys/bus/pci/devices/$GPU_ADDR" ]]; then
+        echo "Removing GPU from PCI bus..."
+        echo 1 > /sys/bus/pci/devices/$GPU_ADDR/remove 2>/dev/null || true
     fi
-    if [[ -n "$AUDIO_ADDR" ]] && [[ -e "/sys/bus/pci/drivers/vfio-pci/$AUDIO_ADDR" ]]; then
-        echo "$AUDIO_ADDR" > /sys/bus/pci/drivers/vfio-pci/unbind 2>/dev/null || true
+    if [[ -n "$AUDIO_ADDR" ]] && [[ -e "/sys/bus/pci/devices/$AUDIO_ADDR" ]]; then
+        echo 1 > /sys/bus/pci/devices/$AUDIO_ADDR/remove 2>/dev/null || true
     fi
-
-    # Clear driver_override
-    echo "" > /sys/bus/pci/devices/$GPU_ADDR/driver_override 2>/dev/null || true
-    if [[ -n "$AUDIO_ADDR" ]]; then
-        echo "" > /sys/bus/pci/devices/$AUDIO_ADDR/driver_override 2>/dev/null || true
-    fi
+    sleep 2
 
     # Rescan PCI bus
-    echo 1 > /sys/bus/pci/rescan 2>/dev/null || true
-    sleep 1
+    echo "Rescanning PCI bus..."
+    echo 1 > /sys/bus/pci/rescan
+    sleep 3
 
-    # Rebind to original driver
-    if [[ -n "$ORIGINAL_DRIVER" ]] && [[ "$ORIGINAL_DRIVER" != "vfio-pci" ]]; then
-        modprobe "$ORIGINAL_DRIVER" 2>/dev/null || true
-        sleep 1
-        if [[ -e "/sys/bus/pci/devices/$GPU_ADDR" ]] && [[ ! -e "/sys/bus/pci/devices/$GPU_ADDR/driver" ]]; then
-            echo "$GPU_ADDR" > /sys/bus/pci/drivers/$ORIGINAL_DRIVER/bind 2>/dev/null || true
-        fi
+    # Unload VFIO modules
+    modprobe -r vfio_pci 2>/dev/null || true
+    modprobe -r vfio_iommu_type1 2>/dev/null || true
+    modprobe -r vfio 2>/dev/null || true
+    sleep 1
+{nvidia_module_load}
+
+    # Manual bind fallback if GPU doesn't auto-bind
+    if [[ -e "/sys/bus/pci/devices/$GPU_ADDR" ]] && [[ ! -e "/sys/bus/pci/devices/$GPU_ADDR/driver" ]]; then
+        echo "Manual bind to $ORIGINAL_DRIVER..."
+        echo "$GPU_ADDR" > /sys/bus/pci/drivers/$ORIGINAL_DRIVER/bind 2>/dev/null || true
     fi
 
     # Restart display manager
@@ -219,7 +370,7 @@ fi
 echo "Unloading GPU driver modules..."
 
 # Kill any processes using the GPU (try common ones)
-for proc in Xorg Xwayland gnome-shell kwin_wayland plasmashell; do
+for proc in Xorg Xwayland gnome-shell kwin_wayland plasmashell sway hyprland; do
     pkill -9 "$proc" 2>/dev/null || true
 done
 sleep 2
@@ -266,20 +417,7 @@ if [[ ! -e "/sys/bus/pci/drivers/vfio-pci/$GPU_ADDR" ]]; then
 fi
 
 echo "GPU successfully bound to vfio-pci"
-
-# ============================================================================
-# Looking Glass Setup (if enabled)
-# ============================================================================
-
-if [[ "$LOOKING_GLASS_ENABLED" == "true" ]]; then
-    echo "Setting up Looking Glass IVSHMEM..."
-
-    # Create shared memory file
-    touch /dev/shm/looking-glass
-    chown $(logname):kvm /dev/shm/looking-glass 2>/dev/null || chown root:root /dev/shm/looking-glass
-    chmod 0660 /dev/shm/looking-glass
-fi
-
+{tpm_start}
 # ============================================================================
 # Start VM
 # ============================================================================
@@ -288,38 +426,137 @@ echo ""
 echo "============================================"
 echo "Starting VM: $VM_NAME"
 echo "============================================"
+echo "Note: Display will appear on your physical monitor(s)"
 echo ""
 
-# Start Looking Glass client in background (if enabled)
-if [[ "$LOOKING_GLASS_ENABLED" == "true" ]] && [[ "$LG_AUTO_LAUNCH" == "true" ]]; then
-    # Start on TTY7 after a delay
-    (
-        sleep 10
-        sudo -u $(logname) DISPLAY=:0 "$LG_CLIENT" -F &
-    ) &
-    LG_PID=$!
-fi
-
-# Run QEMU
+# Run QEMU (no 'exec' so cleanup trap runs)
 cd "$VM_DIR"
 {qemu_command}
-
-# Kill Looking Glass client if running
-if [[ -n "${{LG_PID:-}}" ]]; then
-    kill $LG_PID 2>/dev/null || true
-fi
 
 echo ""
 echo "VM has exited."
 # Cleanup will run via trap
+"#,
+        vm_name = vm_name,
+        vm_dir = vm_dir,
+        gpu_addr = gpu_addr,
+        audio_addr = audio_addr,
+        original_driver = original_driver,
+        display_manager = display_manager,
+        variable_defs = variable_defs,
+        tpm_functions = tpm_functions,
+        tpm_cleanup = if components.has_tpm {
+            r#"
+    # Kill TPM emulator
+    if [[ -n "$TPM_DIR" ]]; then
+        pkill -f "swtpm.*$TPM_DIR" 2>/dev/null || true
+    fi
 "#
+        } else { "" },
+        nvidia_module_load = nvidia_module_load,
+        unload_modules_cmd = unload_modules_cmd,
+        tpm_start = tpm_start,
+        qemu_command = qemu_command,
     );
 
     Ok(script)
 }
 
+/// Generate variable definitions from launch.sh components
+fn generate_variable_definitions(vm: &DiscoveredVm, components: &LaunchScriptComponents) -> String {
+    let mut vars = Vec::new();
+
+    // Add disk variable
+    if let Some(ref disk_var) = components.disk_var {
+        vars.push(disk_var.clone());
+    } else if let Some(disk) = vm.config.disks.first() {
+        vars.push(format!("DISK=\"{}\"", disk.path.display()));
+    }
+
+    // Add ISO variable if present
+    if let Some(ref iso_var) = components.iso_var {
+        vars.push(iso_var.clone());
+    }
+
+    // Add OVMF paths if UEFI
+    if components.has_uefi {
+        if let Some(ref ovmf_code) = components.ovmf_code {
+            vars.push(format!("OVMF_CODE=\"{}\"", ovmf_code));
+        }
+        if let Some(ref ovmf_vars) = components.ovmf_vars {
+            vars.push(format!("OVMF_VARS=\"{}\"", ovmf_vars));
+        }
+    }
+
+    // Add TPM directory if TPM enabled
+    if components.has_tpm {
+        if let Some(ref tpm_dir) = components.tpm_dir {
+            vars.push(format!("TPM_DIR=\"{}\"", tpm_dir));
+        } else {
+            vars.push(format!("TPM_DIR=\"{}/tpm\"", vm.path.display()));
+        }
+    }
+
+    // Add SMBIOS opts if present
+    if let Some(ref smbios) = components.smbios_opts {
+        vars.push(smbios.clone());
+    }
+
+    if vars.is_empty() {
+        String::new()
+    } else {
+        vars.join("\n") + "\n"
+    }
+}
+
+/// Generate TPM initialization and start functions
+fn generate_tpm_functions(components: &LaunchScriptComponents) -> String {
+    let tpm_dir = components.tpm_dir.as_deref().unwrap_or("$VM_DIR/tpm");
+
+    format!(r#"
+# ============================================================================
+# TPM Functions
+# ============================================================================
+
+init_tpm() {{
+    if [[ ! -d "{tpm_dir}" ]]; then
+        echo "Initializing TPM state directory..."
+        mkdir -p "{tpm_dir}"
+        swtpm_setup --tpmstate "{tpm_dir}" --tpm2 --create-ek-cert --create-platform-cert
+    fi
+}}
+
+start_tpm() {{
+    init_tpm
+    echo "Starting TPM emulator..."
+    swtpm socket \
+        --tpmstate dir="{tpm_dir}" \
+        --ctrl type=unixio,path="{tpm_dir}/swtpm-sock" \
+        --tpm2 \
+        --daemon
+    sleep 1
+}}
+"#, tpm_dir = tpm_dir)
+}
+
+/// Generate USB passthrough arguments
+fn generate_usb_passthrough_args(devices: &[crate::vm::UsbPassthrough]) -> String {
+    if devices.is_empty() {
+        return String::new();
+    }
+
+    let mut args = vec!["-usb".to_string()];
+    for dev in devices {
+        args.push(format!(
+            "-device usb-host,vendorid=0x{:04x},productid=0x{:04x}",
+            dev.vendor_id, dev.product_id
+        ));
+    }
+    args.join(" \\\n    ")
+}
+
 /// Generate the emergency restore script
-fn generate_restore_script(config: &SingleGpuConfig) -> String {
+fn generate_restore_script(vm: &DiscoveredVm, config: &SingleGpuConfig) -> String {
     let gpu_addr = &config.gpu.address;
     let audio_addr = config
         .audio
@@ -328,17 +565,54 @@ fn generate_restore_script(config: &SingleGpuConfig) -> String {
         .unwrap_or("");
     let original_driver = config.original_driver.module_name();
     let display_manager = config.display_manager.service_name();
+    let vm_name = vm.display_name();
+    let vm_dir = vm.path.display();
+
+    // Check if TPM is used
+    let launch_script = fs::read_to_string(&vm.launch_script).unwrap_or_default();
+    let components = parse_launch_script(&launch_script);
+
+    let tpm_cleanup = if components.has_tpm {
+        let tpm_dir = components.tpm_dir.as_deref().unwrap_or("$VM_DIR/tpm");
+        format!(r#"
+# Kill TPM emulator if running
+TPM_DIR="{tpm_dir}"
+pkill -f "swtpm.*$TPM_DIR" 2>/dev/null || true
+"#, tpm_dir = tpm_dir)
+    } else {
+        String::new()
+    };
+
+    let nvidia_module_load = if original_driver == "nvidia" {
+        r#"
+    # Load NVIDIA modules in dependency order
+    echo "Loading NVIDIA modules..."
+    modprobe nvidia 2>/dev/null || true
+    sleep 1
+    modprobe nvidia_modeset 2>/dev/null || true
+    sleep 0.5
+    modprobe nvidia_drm 2>/dev/null || true
+    modprobe nvidia_uvm 2>/dev/null || true
+    sleep 1"#.to_string()
+    } else {
+        format!(r#"
+    echo "Loading {} driver..."
+    modprobe "{}" 2>/dev/null || true
+    sleep 2"#, original_driver, original_driver)
+    };
 
     format!(
         r#"#!/bin/bash
 # Single GPU Passthrough Restore Script
-# Generated by vm-curator
+# Generated by vm-curator for: {vm_name}
 #
 # Use this script to restore your display if something goes wrong.
 # Can be run from SSH or a recovery boot.
 
 set -e
 
+VM_DIR="{vm_dir}"
+VM_NAME="{vm_name}"
 GPU_ADDR="{gpu_addr}"
 AUDIO_ADDR="{audio_addr}"
 ORIGINAL_DRIVER="{original_driver}"
@@ -352,37 +626,39 @@ fi
 
 echo "Restoring display..."
 
-# Unbind from vfio-pci
-if [[ -e "/sys/bus/pci/drivers/vfio-pci/$GPU_ADDR" ]]; then
-    echo "Unbinding GPU from vfio-pci..."
-    echo "$GPU_ADDR" > /sys/bus/pci/drivers/vfio-pci/unbind 2>/dev/null || true
+# Kill any lingering QEMU processes
+echo "Killing any QEMU processes..."
+pkill -f "qemu.*$VM_NAME" 2>/dev/null || true
+{tpm_cleanup}
+# Remove and rescan PCI devices (more reliable than unbind)
+echo "Removing GPU from PCI bus..."
+if [[ -e "/sys/bus/pci/devices/$GPU_ADDR" ]]; then
+    echo 1 > /sys/bus/pci/devices/$GPU_ADDR/remove 2>/dev/null || true
 fi
-
-if [[ -n "$AUDIO_ADDR" ]] && [[ -e "/sys/bus/pci/drivers/vfio-pci/$AUDIO_ADDR" ]]; then
-    echo "Unbinding audio from vfio-pci..."
-    echo "$AUDIO_ADDR" > /sys/bus/pci/drivers/vfio-pci/unbind 2>/dev/null || true
+if [[ -n "$AUDIO_ADDR" ]] && [[ -e "/sys/bus/pci/devices/$AUDIO_ADDR" ]]; then
+    echo 1 > /sys/bus/pci/devices/$AUDIO_ADDR/remove 2>/dev/null || true
 fi
-
-# Clear driver_override
-echo "" > /sys/bus/pci/devices/$GPU_ADDR/driver_override 2>/dev/null || true
-if [[ -n "$AUDIO_ADDR" ]]; then
-    echo "" > /sys/bus/pci/devices/$AUDIO_ADDR/driver_override 2>/dev/null || true
-fi
+sleep 2
 
 # Rescan PCI bus
 echo "Rescanning PCI bus..."
 echo 1 > /sys/bus/pci/rescan
+sleep 3
 
-sleep 2
+# Unload VFIO modules
+echo "Unloading VFIO modules..."
+modprobe -r vfio_pci 2>/dev/null || true
+modprobe -r vfio_iommu_type1 2>/dev/null || true
+modprobe -r vfio 2>/dev/null || true
+sleep 1
 
-# Load and bind to original driver
+# Load original driver
 if [[ -n "$ORIGINAL_DRIVER" ]] && [[ "$ORIGINAL_DRIVER" != "vfio-pci" ]]; then
-    echo "Loading $ORIGINAL_DRIVER driver..."
-    modprobe "$ORIGINAL_DRIVER" 2>/dev/null || true
-    sleep 2
+{nvidia_module_load}
 
-    # Try to bind
+    # Manual bind fallback if GPU doesn't auto-bind
     if [[ -e "/sys/bus/pci/devices/$GPU_ADDR" ]] && [[ ! -e "/sys/bus/pci/devices/$GPU_ADDR/driver" ]]; then
+        echo "Manual bind to $ORIGINAL_DRIVER..."
         echo "$GPU_ADDR" > /sys/bus/pci/drivers/$ORIGINAL_DRIVER/bind 2>/dev/null || true
     fi
 fi
@@ -394,20 +670,214 @@ systemctl start "$DISPLAY_MANAGER" 2>/dev/null || true
 echo ""
 echo "Restore complete!"
 echo "If display still doesn't work, try rebooting."
-"#
+"#,
+        vm_name = vm_name,
+        vm_dir = vm_dir,
+        gpu_addr = gpu_addr,
+        audio_addr = audio_addr,
+        original_driver = original_driver,
+        display_manager = display_manager,
+        tpm_cleanup = tpm_cleanup,
+        nvidia_module_load = nvidia_module_load,
     )
 }
 
-/// Generate the one-time setup script
-fn generate_setup_script(config: &SingleGpuConfig) -> String {
-    let looking_glass_enabled = config.looking_glass.enabled;
-    let ivshmem_size = config.looking_glass.ivshmem_size_mb;
-    let original_driver = config.original_driver.module_name();
+/// Result of running system setup
+#[derive(Debug)]
+pub enum SystemSetupResult {
+    /// Setup launched in terminal window
+    Launched,
+    /// No terminal emulator found
+    NoTerminal,
+    /// Setup failed with error
+    Error(String),
+}
 
+/// Run the one-time system setup for single GPU passthrough.
+/// This launches an interactive terminal window with the setup script,
+/// allowing the user to see output and provide input (e.g., for mkinitcpio).
+pub fn run_system_setup(gpu_driver: &str) -> SystemSetupResult {
+    use std::process::Command;
+
+    // Generate the setup script
+    let script_content = generate_interactive_setup_script(gpu_driver);
+    let script_path = "/tmp/vm-curator-vfio-setup.sh";
+
+    // Write the script
+    if let Err(e) = std::fs::write(script_path, &script_content) {
+        return SystemSetupResult::Error(format!("Failed to write setup script: {}", e));
+    }
+
+    // Make it executable
+    if let Err(e) = std::fs::set_permissions(
+        script_path,
+        std::os::unix::fs::PermissionsExt::from_mode(0o755),
+    ) {
+        return SystemSetupResult::Error(format!("Failed to make script executable: {}", e));
+    }
+
+    // Find a terminal emulator and launch the script
+    // Try each terminal in order of preference
+    let terminals: &[(&str, &[&str])] = &[
+        ("alacritty", &["-e", "sudo", script_path]),
+        ("kitty", &["sudo", script_path]),
+        ("ghostty", &["-e", "sudo", script_path]),
+        ("gnome-terminal", &["--", "sudo", script_path]),
+        ("konsole", &["-e", "sudo", script_path]),
+        ("xfce4-terminal", &["-x", "sudo", script_path]),
+        ("xterm", &["-e", "sudo", script_path]),
+    ];
+
+    for (term, args) in terminals {
+        if Command::new("which")
+            .arg(term)
+            .output()
+            .map(|o| o.status.success())
+            .unwrap_or(false)
+        {
+            match Command::new(term).args(*args).spawn() {
+                Ok(_) => return SystemSetupResult::Launched,
+                Err(_) => continue,
+            }
+        }
+    }
+
+    SystemSetupResult::NoTerminal
+}
+
+/// Generate an interactive setup script that shows progress and waits for user
+fn generate_interactive_setup_script(gpu_driver: &str) -> String {
+    let softdep_line = format!("softdep {} pre: vfio-pci", gpu_driver);
+
+    format!(
+        r#"#!/bin/bash
+# Single GPU Passthrough System Setup
+# Generated by vm-curator
+#
+# This script configures your system for single GPU passthrough.
+
+set -e
+
+echo "========================================"
+echo "  Single GPU Passthrough System Setup"
+echo "========================================"
+echo ""
+echo "This will:"
+echo "  1. Create /etc/modules-load.d/vfio.conf"
+echo "  2. Create /etc/modprobe.d/vfio.conf"
+echo "  3. Regenerate initramfs (if applicable)"
+echo ""
+echo "Press Enter to continue or Ctrl+C to cancel..."
+read
+
+echo ""
+echo "[1/3] Creating VFIO modules configuration..."
+
+cat > /etc/modules-load.d/vfio.conf << 'EOF'
+# VFIO modules for GPU passthrough
+vfio
+vfio_iommu_type1
+vfio_pci
+EOF
+
+echo "  Created /etc/modules-load.d/vfio.conf"
+
+echo ""
+echo "[2/3] Creating modprobe configuration..."
+
+cat > /etc/modprobe.d/vfio.conf << 'EOF'
+# Load VFIO before GPU driver
+{softdep_line}
+options vfio_pci disable_vga=1
+EOF
+
+echo "  Created /etc/modprobe.d/vfio.conf"
+
+echo ""
+echo "[3/3] Updating boot configuration..."
+echo ""
+
+# Detect bootloader and initramfs tool
+INITRAMFS_UPDATED=false
+
+if command -v mkinitcpio &>/dev/null; then
+    echo "Detected mkinitcpio - regenerating initramfs..."
+    echo ""
+    mkinitcpio -P
+    INITRAMFS_UPDATED=true
+elif command -v booster &>/dev/null; then
+    echo "Detected booster - regenerating initramfs..."
+    echo ""
+    booster build --force
+    INITRAMFS_UPDATED=true
+elif command -v update-initramfs &>/dev/null; then
+    echo "Detected update-initramfs - regenerating initramfs..."
+    echo ""
+    update-initramfs -u -k all
+    INITRAMFS_UPDATED=true
+elif command -v dracut &>/dev/null; then
+    echo "Detected dracut - regenerating initramfs..."
+    echo ""
+    dracut -f --regenerate-all
+    INITRAMFS_UPDATED=true
+fi
+
+# Check for Limine bootloader
+if [[ -f /boot/limine.cfg ]] || [[ -f /boot/limine/limine.cfg ]] || [[ -f /boot/EFI/BOOT/limine.cfg ]]; then
+    echo ""
+    echo "Detected Limine bootloader."
+    if [[ "$INITRAMFS_UPDATED" == "true" ]]; then
+        echo "Initramfs has been updated. Limine should pick up changes on reboot."
+    else
+        echo ""
+        echo "If you use an initramfs with Limine, please regenerate it manually."
+        echo "If you boot without an initramfs, the module configs will be loaded"
+        echo "by systemd-modules-load.service after boot."
+    fi
+fi
+
+# Check for systemd-boot
+if [[ -d /boot/loader ]] || bootctl is-installed &>/dev/null 2>&1; then
+    if [[ "$INITRAMFS_UPDATED" == "false" ]]; then
+        echo ""
+        echo "Detected systemd-boot. Please ensure your initramfs is regenerated"
+        echo "if you use one, or the modules will load via systemd-modules-load."
+    fi
+fi
+
+if [[ "$INITRAMFS_UPDATED" == "false" ]]; then
+    echo ""
+    echo "No standard initramfs tool detected."
+    echo "The VFIO modules will be loaded by systemd-modules-load.service on boot."
+    echo "This should work for most setups, but if you use a custom initramfs,"
+    echo "please regenerate it manually to include the VFIO modules."
+fi
+
+echo ""
+echo "========================================"
+echo "  Setup Complete!"
+echo "========================================"
+echo ""
+echo "You must REBOOT your system for changes to take effect."
+echo ""
+echo "After reboot, to use single GPU passthrough:"
+echo "  1. Press Ctrl+Alt+F3 to switch to TTY3"
+echo "  2. Log in with your username"
+echo "  3. Run: sudo ./single-gpu-start.sh (in your VM directory)"
+echo ""
+echo "Press Enter to close this window..."
+read
+"#,
+        softdep_line = softdep_line,
+    )
+}
+
+/// Generate the one-time setup script content (for reference/manual use)
+pub fn generate_setup_script_content(gpu_driver: &str) -> String {
     // Build modprobe softdep line
     let softdep_line = format!(
         "softdep {} pre: vfio-pci",
-        original_driver
+        gpu_driver
     );
 
     format!(
@@ -419,12 +889,8 @@ fn generate_setup_script(config: &SingleGpuConfig) -> String {
 # This script:
 #   - Adds VFIO modules to initramfs
 #   - Creates modprobe configuration
-#   - Sets up Looking Glass permissions (if enabled)
 
 set -e
-
-LOOKING_GLASS_ENABLED="{looking_glass_enabled}"
-IVSHMEM_SIZE="{ivshmem_size}"
 
 # Must run as root
 if [[ $EUID -ne 0 ]]; then
@@ -439,7 +905,7 @@ echo ""
 # VFIO Modules
 # ============================================================================
 
-echo "[1/4] Configuring VFIO modules..."
+echo "[1/3] Configuring VFIO modules..."
 
 # Add vfio modules to /etc/modules-load.d/
 cat > /etc/modules-load.d/vfio.conf << 'EOF'
@@ -464,7 +930,7 @@ echo "  Created /etc/modprobe.d/vfio.conf"
 # ============================================================================
 
 echo ""
-echo "[2/4] Updating initramfs..."
+echo "[2/3] Updating initramfs..."
 
 # Detect distro and update initramfs accordingly
 if command -v mkinitcpio &>/dev/null; then
@@ -491,54 +957,11 @@ else
 fi
 
 # ============================================================================
-# Looking Glass Setup
-# ============================================================================
-
-if [[ "$LOOKING_GLASS_ENABLED" == "true" ]]; then
-    echo ""
-    echo "[3/4] Setting up Looking Glass..."
-
-    # Create tmpfiles.d configuration for IVSHMEM
-    cat > /etc/tmpfiles.d/10-looking-glass.conf << EOF
-# Looking Glass IVSHMEM device
-f /dev/shm/looking-glass 0660 root kvm -
-EOF
-
-    echo "  Created /etc/tmpfiles.d/10-looking-glass.conf"
-
-    # Create the file now
-    touch /dev/shm/looking-glass
-    chmod 0660 /dev/shm/looking-glass
-
-    # Try to set ownership
-    if getent group kvm &>/dev/null; then
-        chown root:kvm /dev/shm/looking-glass
-        echo "  Created /dev/shm/looking-glass (owned by root:kvm)"
-    else
-        echo "  Created /dev/shm/looking-glass"
-        echo "  NOTE: 'kvm' group not found. You may need to adjust permissions."
-    fi
-
-    # Add user to kvm group
-    REAL_USER="${{SUDO_USER:-$USER}}"
-    if [[ "$REAL_USER" != "root" ]] && getent group kvm &>/dev/null; then
-        if ! groups "$REAL_USER" | grep -q kvm; then
-            usermod -aG kvm "$REAL_USER"
-            echo "  Added $REAL_USER to 'kvm' group"
-            echo "  NOTE: Log out and back in for group change to take effect"
-        fi
-    fi
-else
-    echo ""
-    echo "[3/4] Skipping Looking Glass setup (not enabled)"
-fi
-
-# ============================================================================
 # Summary
 # ============================================================================
 
 echo ""
-echo "[4/4] Setup complete!"
+echo "[3/3] Setup complete!"
 echo ""
 echo "============================================"
 echo "Next steps:"
@@ -551,26 +974,26 @@ echo "   a. Press Ctrl+Alt+F3 to switch to TTY3"
 echo "   b. Log in with your username"
 echo "   c. Run: sudo ./single-gpu-start.sh"
 echo ""
-echo "3. If anything goes wrong:"
+echo "3. IMPORTANT: Make sure you have a USB keyboard and mouse"
+echo "   configured for passthrough, or the VM won't have input!"
+echo ""
+echo "4. If anything goes wrong:"
 echo "   - SSH into your machine and run: sudo ./single-gpu-restore.sh"
 echo "   - Or reboot the system"
 echo ""
-
-if [[ "$LOOKING_GLASS_ENABLED" == "true" ]]; then
-    echo "Looking Glass notes:"
-    echo "  - Install Looking Glass Host application in your Windows VM"
-    echo "  - Connect a dummy HDMI/DP plug to your GPU"
-    echo "  - The Looking Glass client will auto-start when the VM launches"
-    echo ""
-fi
-
 echo "============================================"
-"#
+"#,
+        softdep_line = softdep_line,
     )
 }
 
 /// Extract and modify QEMU command from the VM's launch script for GPU passthrough
-fn extract_qemu_command_for_passthrough(vm: &DiscoveredVm, config: &SingleGpuConfig) -> Result<String> {
+fn extract_qemu_command_for_passthrough(
+    vm: &DiscoveredVm,
+    config: &SingleGpuConfig,
+    components: &LaunchScriptComponents,
+    usb_passthrough_args: &str,
+) -> Result<String> {
     let launch_script = fs::read_to_string(&vm.launch_script)
         .with_context(|| format!("Failed to read launch script: {:?}", vm.launch_script))?;
 
@@ -584,14 +1007,24 @@ fn extract_qemu_command_for_passthrough(vm: &DiscoveredVm, config: &SingleGpuCon
 
         // Check if this is the start of a QEMU command
         if !in_qemu_command {
+            // Skip 'exec' prefix - we don't want exec because it prevents cleanup trap
             if (trimmed.starts_with("qemu-system-")
-                || trimmed.starts_with("exec qemu-system-")
                 || trimmed.starts_with("\"$QEMU\"")
                 || trimmed.starts_with("$QEMU "))
                 && !trimmed.starts_with('#')
             {
                 in_qemu_command = true;
                 found_qemu = true;
+            } else if trimmed.starts_with("exec qemu-system-") && !trimmed.starts_with('#') {
+                // Remove 'exec' prefix
+                in_qemu_command = true;
+                found_qemu = true;
+                let without_exec = trimmed.strip_prefix("exec ").unwrap_or(trimmed);
+                qemu_lines.push(without_exec.to_string());
+                if !trimmed.ends_with('\\') {
+                    break;
+                }
+                continue;
             }
         }
 
@@ -607,26 +1040,42 @@ fn extract_qemu_command_for_passthrough(vm: &DiscoveredVm, config: &SingleGpuCon
 
     if !found_qemu {
         // Fallback: generate a basic QEMU command
-        return Ok(generate_basic_qemu_command(vm, config));
+        return Ok(generate_basic_qemu_command(vm, config, components, usb_passthrough_args));
     }
 
     // Build the modified QEMU command
     let mut qemu_cmd = qemu_lines.join("\n");
 
+    // Replace any hardcoded -name with $VM_NAME variable (for cleanup to work correctly)
+    let name_re = regex::Regex::new(r#"-name\s+["'][^"']+["']"#).unwrap();
+    qemu_cmd = name_re.replace_all(&qemu_cmd, r#"-name "$VM_NAME""#).to_string();
+
     // Remove existing -display if present (we'll use the GPU's display)
-    let display_re = regex::Regex::new(r"-display\s+\S+").unwrap();
+    let display_re = regex::Regex::new(r"-display\s+\S+(,\S+)*").unwrap();
     qemu_cmd = display_re.replace_all(&qemu_cmd, "").to_string();
 
     // Remove existing -vga if present
     let vga_re = regex::Regex::new(r"-vga\s+\S+").unwrap();
     qemu_cmd = vga_re.replace_all(&qemu_cmd, "").to_string();
 
+    // Remove existing audio devices (no user session available for audio)
+    let audio_re = regex::Regex::new(r"-audiodev\s+\S+(,\S+)*").unwrap();
+    qemu_cmd = audio_re.replace_all(&qemu_cmd, "").to_string();
+    let soundhw_re = regex::Regex::new(r"-device\s+(intel-hda|ich9-intel-hda|hda-duplex|hda-micro|hda-output|AC97|sb16)[,\s]?[^\s\\]*").unwrap();
+    qemu_cmd = soundhw_re.replace_all(&qemu_cmd, "").to_string();
+
+    // Clean up empty continuation lines
+    let empty_cont_re = regex::Regex::new(r"\\\n\s*\\\n").unwrap();
+    while empty_cont_re.is_match(&qemu_cmd) {
+        qemu_cmd = empty_cont_re.replace_all(&qemu_cmd, "\\\n").to_string();
+    }
+
     // Build passthrough arguments
     let mut passthrough_args = Vec::new();
 
-    // GPU passthrough
+    // GPU passthrough (no x-vga=on - incompatible with modern NVIDIA GPUs)
     passthrough_args.push(format!(
-        "-device vfio-pci,host={},multifunction=on,x-vga=on",
+        "-device vfio-pci,host={},multifunction=on",
         config.gpu.address
     ));
 
@@ -638,26 +1087,25 @@ fn extract_qemu_command_for_passthrough(vm: &DiscoveredVm, config: &SingleGpuCon
         ));
     }
 
-    // Looking Glass IVSHMEM (if enabled)
-    if config.looking_glass.enabled {
-        passthrough_args.push(
-            "-device ivshmem-plain,memdev=ivshmem,bus=pcie.0".to_string()
-        );
-        passthrough_args.push(format!(
-            "-object memory-backend-file,id=ivshmem,share=on,mem-path=/dev/shm/looking-glass,size={}",
-            config.looking_glass.ivshmem_size_str()
-        ));
+    // Display settings - none (output goes to physical GPU)
+    passthrough_args.push("-display none".to_string());
+    passthrough_args.push("-vga none".to_string());
+
+    // Add virtio-rng for entropy
+    passthrough_args.push("-device virtio-rng-pci".to_string());
+
+    // USB passthrough (from launch.sh config)
+    if !usb_passthrough_args.is_empty() {
+        passthrough_args.push(usb_passthrough_args.to_string());
     }
 
-    // Display settings for passthrough (no display, or use Looking Glass)
-    if config.looking_glass.enabled {
-        passthrough_args.push("-display none".to_string());
-        passthrough_args.push("-vga none".to_string());
+    // Add NVIDIA CPU flags if NVIDIA GPU
+    let nvidia_cpu_flags = if config.gpu.is_nvidia() {
+        // These flags help with NVIDIA driver compatibility
+        Some("-cpu host,kvm=off,hv_vendor_id=AuthenticAMD,hv_relaxed,hv_spinlocks=0x1fff,hv_vapic,hv_time".to_string())
     } else {
-        // Use the physical GPU output
-        passthrough_args.push("-display none".to_string());
-        passthrough_args.push("-vga none".to_string());
-    }
+        None
+    };
 
     // Add passthrough args to the QEMU command
     let passthrough_str = passthrough_args.join(" \\\n    ");
@@ -675,28 +1123,89 @@ fn extract_qemu_command_for_passthrough(vm: &DiscoveredVm, config: &SingleGpuCon
         qemu_cmd = format!("{} \\\n    {}", qemu_cmd.trim_end(), passthrough_str);
     }
 
+    // Replace -cpu host with NVIDIA flags if needed
+    if let Some(flags) = nvidia_cpu_flags {
+        let cpu_re = regex::Regex::new(r"-cpu\s+host\b").unwrap();
+        if cpu_re.is_match(&qemu_cmd) {
+            qemu_cmd = cpu_re.replace(&qemu_cmd, flags.as_str()).to_string();
+        }
+    }
+
+    // Add kernel_irqchip=on to machine options if not present
+    if !qemu_cmd.contains("kernel_irqchip") {
+        let machine_re = regex::Regex::new(r"-machine\s+(\S+)").unwrap();
+        if let Some(caps) = machine_re.captures(&qemu_cmd) {
+            let machine_opts = caps.get(1).unwrap().as_str();
+            if !machine_opts.contains("kernel_irqchip") {
+                let new_opts = if machine_opts.contains(',') {
+                    format!("{},kernel_irqchip=on", machine_opts)
+                } else {
+                    format!("{},kernel_irqchip=on", machine_opts)
+                };
+                qemu_cmd = machine_re.replace(&qemu_cmd, format!("-machine {}", new_opts).as_str()).to_string();
+            }
+        }
+    }
+
+    // Fix boot order if it's set to 'd' (CD-ROM first) - use 'c' (disk first) for normal boot
+    let boot_re = regex::Regex::new(r"-boot\s+order=d\b").unwrap();
+    qemu_cmd = boot_re.replace(&qemu_cmd, "-boot order=c").to_string();
+
     Ok(qemu_cmd)
 }
 
 /// Generate a basic QEMU command when the launch script can't be parsed
-fn generate_basic_qemu_command(vm: &DiscoveredVm, config: &SingleGpuConfig) -> String {
+fn generate_basic_qemu_command(
+    vm: &DiscoveredVm,
+    config: &SingleGpuConfig,
+    components: &LaunchScriptComponents,
+    usb_passthrough_args: &str,
+) -> String {
     let qemu_emulator = vm.config.emulator.command();
     let memory = vm.config.memory_mb;
     let cpu_cores = vm.config.cpu_cores;
 
+    // Use NVIDIA CPU flags if NVIDIA GPU
+    let cpu_flags = if config.gpu.is_nvidia() {
+        "host,kvm=off,hv_vendor_id=AuthenticAMD,hv_relaxed,hv_spinlocks=0x1fff,hv_vapic,hv_time"
+    } else {
+        "host"
+    };
+
     let mut cmd = format!(
         r#"{} \
-    -name "{}" \
-    -machine q35,accel=kvm \
-    -cpu host \
+    -name "$VM_NAME" \
+    -machine q35,accel=kvm,kernel_irqchip=on \
+    -cpu {} \
     -m {} \
     -smp {} \
     -enable-kvm"#,
         qemu_emulator,
-        vm.display_name(),
+        cpu_flags,
         memory,
         cpu_cores
     );
+
+    // Add SMBIOS options if present (for Windows to avoid corporate machine detection)
+    if components.smbios_opts.is_some() {
+        cmd.push_str(r#" \
+    "${SMBIOS_OPTS[@]}""#);
+    }
+
+    // Add UEFI if present
+    if components.has_uefi {
+        cmd.push_str(r#" \
+    -drive if=pflash,format=raw,readonly=on,file="$OVMF_CODE" \
+    -drive if=pflash,format=raw,file="$OVMF_VARS""#);
+    }
+
+    // Add TPM if present
+    if components.has_tpm {
+        cmd.push_str(r#" \
+    -chardev socket,id=chrtpm,path="$TPM_DIR/swtpm-sock" \
+    -tpmdev emulator,id=tpm0,chardev=chrtpm \
+    -device tpm-tis,tpmdev=tpm0"#);
+    }
 
     // Add disk
     if let Some(disk) = vm.config.disks.first() {
@@ -709,16 +1218,15 @@ fn generate_basic_qemu_command(vm: &DiscoveredVm, config: &SingleGpuConfig) -> S
         };
         cmd.push_str(&format!(
             r#" \
-    -drive file={},format={},if=virtio"#,
-            disk.path.display(),
+    -drive file="$DISK",format={},if=virtio"#,
             format_str
         ));
     }
 
-    // Add GPU passthrough
+    // Add GPU passthrough (no x-vga=on - incompatible with modern NVIDIA GPUs)
     cmd.push_str(&format!(
         r#" \
-    -device vfio-pci,host={},multifunction=on,x-vga=on"#,
+    -device vfio-pci,host={},multifunction=on"#,
         config.gpu.address
     ));
 
@@ -731,28 +1239,39 @@ fn generate_basic_qemu_command(vm: &DiscoveredVm, config: &SingleGpuConfig) -> S
         ));
     }
 
-    // Looking Glass IVSHMEM
-    if config.looking_glass.enabled {
-        cmd.push_str(&format!(
-            r#" \
-    -device ivshmem-plain,memdev=ivshmem,bus=pcie.0 \
-    -object memory-backend-file,id=ivshmem,share=on,mem-path=/dev/shm/looking-glass,size={}"#,
-            config.looking_glass.ivshmem_size_str()
-        ));
-    }
-
-    // Display settings
+    // Display settings - none (output goes to physical GPU)
     cmd.push_str(
         r#" \
     -display none \
     -vga none"#,
     );
 
-    // USB for keyboard/mouse
+    // Add virtio-rng for entropy
     cmd.push_str(
         r#" \
-    -usb \
-    -device usb-host,vendorid=0x0000,productid=0x0000"#,
+    -device virtio-rng-pci"#,
+    );
+
+    // Add USB passthrough
+    if !usb_passthrough_args.is_empty() {
+        cmd.push_str(&format!(
+            r#" \
+    {}"#,
+            usb_passthrough_args
+        ));
+    } else {
+        // Placeholder for USB - user needs to configure
+        cmd.push_str(
+            r#" \
+    # USB passthrough - configure via USB Passthrough in VM Management
+    -usb"#,
+        );
+    }
+
+    // Boot from disk
+    cmd.push_str(
+        r#" \
+    -boot order=c"#,
     );
 
     cmd
@@ -763,7 +1282,6 @@ pub fn delete_scripts(vm_path: &Path) -> Result<()> {
     let scripts = [
         "single-gpu-start.sh",
         "single-gpu-restore.sh",
-        "single-gpu-setup.sh",
     ];
 
     for script in scripts {
@@ -775,4 +1293,18 @@ pub fn delete_scripts(vm_path: &Path) -> Result<()> {
     }
 
     Ok(())
+}
+
+/// Regenerate single-GPU scripts if they exist
+/// Returns Ok(true) if scripts were regenerated, Ok(false) if no scripts exist
+pub fn regenerate_if_exists(vm: &DiscoveredVm, config: &SingleGpuConfig) -> Result<bool> {
+    use crate::hardware::scripts_exist;
+
+    if !scripts_exist(&vm.path) {
+        return Ok(false);
+    }
+
+    // Scripts exist, regenerate them
+    generate_single_gpu_scripts(vm, config)?;
+    Ok(true)
 }

@@ -2,44 +2,36 @@
 //!
 //! Provides UI for configuring single GPU passthrough, including:
 //! - GPU and IOMMU group information display
-//! - Looking Glass configuration
 //! - Script generation controls
 //! - System support status
+//!
+//! Note: Looking Glass is NOT used for single-GPU passthrough because the display
+//! goes directly to physical monitors connected to the passed-through GPU.
 
 use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::{
     layout::{Alignment, Constraint, Direction, Layout, Rect},
     prelude::*,
     style::{Color, Modifier, Style},
-    widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragraph, Wrap},
+    widgets::{Block, Borders, Clear, Paragraph, Wrap},
 };
 
 use crate::app::{App, Screen};
-use crate::hardware::single_gpu::{
-    check_single_gpu_support, is_running_from_tty, LookingGlassConfig,
-};
+use crate::hardware::single_gpu::{check_single_gpu_support, is_running_from_tty};
 use crate::hardware::{scripts_exist, SingleGpuConfig};
 use crate::vm::single_gpu_scripts;
 
 /// Fields that can be focused in the setup screen
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SetupField {
-    LookingGlassEnabled,
-    IvshmemSize,
-    AutoLaunchClient,
     GenerateScripts,
-    RunSetup,
     DeleteScripts,
 }
 
 impl SetupField {
     fn all() -> &'static [SetupField] {
         &[
-            SetupField::LookingGlassEnabled,
-            SetupField::IvshmemSize,
-            SetupField::AutoLaunchClient,
             SetupField::GenerateScripts,
-            SetupField::RunSetup,
             SetupField::DeleteScripts,
         ]
     }
@@ -51,7 +43,7 @@ pub fn render(app: &App, frame: &mut Frame) {
 
     // Calculate dialog size
     let dialog_width = 72.min(area.width.saturating_sub(4));
-    let dialog_height = 32.min(area.height.saturating_sub(4));
+    let dialog_height = 26.min(area.height.saturating_sub(4));
 
     let dialog_area = centered_rect(dialog_width, dialog_height, area);
     frame.render_widget(Clear, dialog_area);
@@ -65,15 +57,13 @@ pub fn render(app: &App, frame: &mut Frame) {
     let inner = block.inner(dialog_area);
     frame.render_widget(block, dialog_area);
 
-    // Layout: System support, GPU info, separator, options, separator, scripts, help
+    // Layout: System support, GPU info, separator, scripts, help
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .margin(1)
         .constraints([
             Constraint::Length(3),  // System support status
             Constraint::Length(6),  // GPU info
-            Constraint::Length(1),  // Separator
-            Constraint::Length(6),  // Looking Glass options
             Constraint::Length(1),  // Separator
             Constraint::Length(6),  // Scripts info
             Constraint::Min(1),     // Spacer
@@ -92,19 +82,11 @@ pub fn render(app: &App, frame: &mut Frame) {
         .style(Style::default().fg(Color::DarkGray));
     frame.render_widget(sep1, chunks[2]);
 
-    // Looking Glass options
-    render_looking_glass_options(app, frame, chunks[3]);
-
-    // Separator
-    let sep2 = Paragraph::new("─".repeat(chunks[4].width as usize))
-        .style(Style::default().fg(Color::DarkGray));
-    frame.render_widget(sep2, chunks[4]);
-
     // Scripts info
-    render_scripts_info(app, frame, chunks[5]);
+    render_scripts_info(app, frame, chunks[3]);
 
     // Help
-    render_help(app, frame, chunks[7]);
+    render_help(app, frame, chunks[5]);
 }
 
 /// Render system support status
@@ -135,9 +117,6 @@ fn render_system_support(_app: &App, frame: &mut Frame, area: Rect) {
         "VFIO: {}",
         if support.vfio_available { "Available" } else { "Not Available" }
     ));
-    if let Some(ref client) = support.looking_glass_client {
-        details.push(format!("LG Client: {}", client.display()));
-    }
 
     lines.push(Line::styled(
         details.join("  |  "),
@@ -242,80 +221,6 @@ fn render_gpu_info(app: &App, frame: &mut Frame, area: Rect) {
     frame.render_widget(para, area);
 }
 
-/// Render Looking Glass options
-fn render_looking_glass_options(app: &App, frame: &mut Frame, area: Rect) {
-    let config = app.single_gpu_config.as_ref();
-    let selected_field = app.single_gpu_selected_field;
-
-    let looking_glass_enabled = config.map(|c| c.looking_glass.enabled).unwrap_or(false);
-    let ivshmem_size = config.map(|c| c.looking_glass.ivshmem_size_mb).unwrap_or(64);
-    let auto_launch = config.map(|c| c.looking_glass.auto_launch_client).unwrap_or(true);
-
-    // Check if Looking Glass is properly configured
-    let lg_ready = config.map(|c| c.is_looking_glass_ready()).unwrap_or(false);
-
-    // Calculate recommended size for common resolutions
-    let recommended_1080p = LookingGlassConfig::recommended_size_for_resolution(1920, 1080);
-    let recommended_4k = LookingGlassConfig::recommended_size_for_resolution(3840, 2160);
-
-    let items: Vec<ListItem> = [
-        (
-            SetupField::LookingGlassEnabled,
-            format!(
-                "[{}] Enable Looking Glass{}",
-                if looking_glass_enabled { "X" } else { " " },
-                if looking_glass_enabled && lg_ready {
-                    " (Ready)"
-                } else if looking_glass_enabled {
-                    " (Client not found)"
-                } else {
-                    ""
-                }
-            ),
-        ),
-        (
-            SetupField::IvshmemSize,
-            format!(
-                "    IVSHMEM Size: {} MB (1080p: {}MB, 4K: {}MB)",
-                ivshmem_size, recommended_1080p, recommended_4k
-            ),
-        ),
-        (
-            SetupField::AutoLaunchClient,
-            format!(
-                "    [{}] Auto-launch Looking Glass client",
-                if auto_launch { "X" } else { " " }
-            ),
-        ),
-    ]
-    .iter()
-    .map(|(field, text)| {
-        let is_selected = selected_field == *field as usize;
-        let is_enabled = looking_glass_enabled || *field == SetupField::LookingGlassEnabled;
-
-        let style = if is_selected {
-            Style::default()
-                .fg(Color::Yellow)
-                .add_modifier(Modifier::BOLD)
-        } else if !is_enabled {
-            Style::default().fg(Color::DarkGray)
-        } else {
-            Style::default().fg(Color::White)
-        };
-
-        ListItem::new(text.clone()).style(style)
-    })
-    .collect();
-
-    let mut state = ListState::default();
-    if selected_field < 3 {
-        state.select(Some(selected_field));
-    }
-
-    let list = List::new(items).highlight_symbol("> ");
-    frame.render_stateful_widget(list, area, &mut state);
-}
-
 /// Render scripts information
 fn render_scripts_info(app: &App, frame: &mut Frame, area: Rect) {
     let vm = app.selected_vm();
@@ -356,16 +261,6 @@ fn render_scripts_info(app: &App, frame: &mut Frame, area: Rect) {
         Style::default().fg(Color::Green)
     };
 
-    let setup_style = if selected_field == SetupField::RunSetup as usize {
-        Style::default()
-            .fg(Color::Yellow)
-            .add_modifier(Modifier::BOLD)
-    } else if scripts_present {
-        Style::default().fg(Color::Cyan)
-    } else {
-        Style::default().fg(Color::DarkGray)
-    };
-
     let delete_style = if selected_field == SetupField::DeleteScripts as usize {
         Style::default()
             .fg(Color::Yellow)
@@ -380,9 +275,6 @@ fn render_scripts_info(app: &App, frame: &mut Frame, area: Rect) {
         Span::styled("[g] ", generate_style),
         Span::styled("Generate", generate_style),
         Span::raw("  "),
-        Span::styled("[s] ", setup_style),
-        Span::styled("Run Setup", setup_style),
-        Span::raw("  "),
         Span::styled("[d] ", delete_style),
         Span::styled("Delete", delete_style),
     ]));
@@ -394,7 +286,7 @@ fn render_scripts_info(app: &App, frame: &mut Frame, area: Rect) {
 /// Render help text
 fn render_help(_app: &App, frame: &mut Frame, area: Rect) {
     let help = Paragraph::new(
-        "[Space/Enter] Toggle  [+/-] Adjust size  [g] Generate  [s] Setup  [d] Delete  [Esc] Back",
+        "[g] Generate Scripts  [d] Delete Scripts  [Esc] Back",
     )
     .style(Style::default().fg(Color::DarkGray))
     .alignment(Alignment::Center);
@@ -503,23 +395,8 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> anyhow::Result<()> {
         KeyCode::Char('g') | KeyCode::Char('G') => {
             generate_scripts(app)?;
         }
-        KeyCode::Char('s') | KeyCode::Char('S') => {
-            run_setup_script(app)?;
-        }
         KeyCode::Char('d') | KeyCode::Char('D') => {
             delete_scripts(app)?;
-        }
-        KeyCode::Char('l') | KeyCode::Char('L') => {
-            toggle_looking_glass(app);
-        }
-        KeyCode::Char('a') | KeyCode::Char('A') => {
-            toggle_auto_launch(app);
-        }
-        KeyCode::Char('+') | KeyCode::Char('=') => {
-            adjust_ivshmem_size(app, 16);
-        }
-        KeyCode::Char('-') | KeyCode::Char('_') => {
-            adjust_ivshmem_size(app, -16);
         }
         _ => {}
     }
@@ -532,21 +409,8 @@ fn handle_field_action(app: &mut App) -> anyhow::Result<()> {
     let field = SetupField::all().get(app.single_gpu_selected_field);
 
     match field {
-        Some(SetupField::LookingGlassEnabled) => {
-            toggle_looking_glass(app);
-        }
-        Some(SetupField::AutoLaunchClient) => {
-            toggle_auto_launch(app);
-        }
-        Some(SetupField::IvshmemSize) => {
-            // Could open a numeric input dialog, for now just increment
-            adjust_ivshmem_size(app, 16);
-        }
         Some(SetupField::GenerateScripts) => {
             generate_scripts(app)?;
-        }
-        Some(SetupField::RunSetup) => {
-            run_setup_script(app)?;
         }
         Some(SetupField::DeleteScripts) => {
             delete_scripts(app)?;
@@ -555,34 +419,6 @@ fn handle_field_action(app: &mut App) -> anyhow::Result<()> {
     }
 
     Ok(())
-}
-
-/// Toggle Looking Glass enabled state
-fn toggle_looking_glass(app: &mut App) {
-    if let Some(ref mut config) = app.single_gpu_config {
-        config.looking_glass.enabled = !config.looking_glass.enabled;
-
-        // If enabling, try to find the client
-        if config.looking_glass.enabled && config.looking_glass.client_path.is_none() {
-            config.looking_glass.client_path = LookingGlassConfig::find_client();
-        }
-    }
-}
-
-/// Toggle auto-launch client state
-fn toggle_auto_launch(app: &mut App) {
-    if let Some(ref mut config) = app.single_gpu_config {
-        config.looking_glass.auto_launch_client = !config.looking_glass.auto_launch_client;
-    }
-}
-
-/// Adjust IVSHMEM size
-fn adjust_ivshmem_size(app: &mut App, delta: i32) {
-    if let Some(ref mut config) = app.single_gpu_config {
-        let current = config.looking_glass.ivshmem_size_mb as i32;
-        let new_size = (current + delta).clamp(16, 512) as u32;
-        config.looking_glass.ivshmem_size_mb = new_size;
-    }
 }
 
 /// Generate single GPU passthrough scripts
@@ -599,20 +435,14 @@ fn generate_scripts(app: &mut App) -> anyhow::Result<()> {
 
     match (vm, config) {
         (Some(vm), Some(config)) => {
-            // Warn if Looking Glass enabled but not ready
-            if config.looking_glass.enabled && !config.is_looking_glass_ready() {
-                app.set_status("Warning: Looking Glass enabled but client not found");
-            }
-
             match crate::vm::generate_single_gpu_scripts(&vm, &config) {
                 Ok(scripts) => {
-                    // Log all generated script paths
+                    // Log generated script paths
                     let dir = scripts.start_script.parent().unwrap();
                     app.set_status(format!(
-                        "Generated: {}, {}, {} in {}",
+                        "Generated: {}, {} in {}",
                         scripts.start_script.file_name().unwrap().to_string_lossy(),
                         scripts.restore_script.file_name().unwrap().to_string_lossy(),
-                        scripts.setup_script.file_name().unwrap().to_string_lossy(),
                         dir.display()
                     ));
                     // Show instructions dialog
@@ -630,27 +460,6 @@ fn generate_scripts(app: &mut App) -> anyhow::Result<()> {
         (_, None) => {
             app.set_status("No GPU configured for passthrough");
         }
-    }
-
-    Ok(())
-}
-
-/// Run the setup script (with sudo)
-fn run_setup_script(app: &mut App) -> anyhow::Result<()> {
-    let vm = app.selected_vm();
-
-    if let Some(vm) = vm {
-        let setup_script = vm.path.join("single-gpu-setup.sh");
-
-        if !setup_script.exists() {
-            app.set_status("Setup script not found. Generate scripts first.");
-            return Ok(());
-        }
-
-        // We can't run sudo from within the TUI easily, so we inform the user
-        app.set_status(format!("Run manually: sudo {}", setup_script.display()));
-    } else {
-        app.set_status("No VM selected");
     }
 
     Ok(())

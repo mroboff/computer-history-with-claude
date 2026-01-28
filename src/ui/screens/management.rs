@@ -22,6 +22,7 @@ pub enum MenuAction {
     Snapshots,
     UsbPassthrough,
     PciPassthrough,
+    MultiGpuPassthrough,
     SingleGpuPassthrough,
     ChangeDisplay,
     RenameVm,
@@ -54,6 +55,15 @@ pub fn get_menu_items(vm: &DiscoveredVm, config: &Config) -> Vec<MenuItem> {
             action: MenuAction::PciPassthrough,
         },
     ];
+
+    // Add Multi-GPU Passthrough option if enabled in settings
+    if config.enable_gpu_passthrough {
+        items.push(MenuItem {
+            name: "Multi-GPU Passthrough",
+            description: "Pass a secondary GPU to the VM with Looking Glass",
+            action: MenuAction::MultiGpuPassthrough,
+        });
+    }
 
     // Add Single GPU Passthrough option if enabled in settings
     if config.single_gpu_enabled {

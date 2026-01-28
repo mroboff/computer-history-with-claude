@@ -27,7 +27,10 @@ pub fn render(app: &App, frame: &mut Frame) {
     frame.render_widget(Clear, dialog_area);
 
     let selected_count = app.selected_pci_devices.len();
-    let title = if app.config.enable_gpu_passthrough {
+    let title = if app.config.single_gpu_enabled {
+        // Single GPU mode - don't show GPU count (boot VGA is passed through differently)
+        format!(" PCI Passthrough ({} selected) ", selected_count)
+    } else if app.config.enable_gpu_passthrough {
         let gpu_count = app.pci_devices.iter().filter(|d| d.is_gpu() && !d.is_boot_vga).count();
         format!(
             " PCI Passthrough ({} selected, {} GPU{} available) ",
@@ -74,8 +77,8 @@ pub fn render(app: &App, frame: &mut Frame) {
     // Render device list
     render_device_list(app, frame, h_chunks[1]);
 
-    // Help text - show GPU options only when GPU passthrough is enabled
-    let help_text = if app.config.enable_gpu_passthrough {
+    // Help text - show GPU options only when multi-GPU passthrough is enabled (not single GPU)
+    let help_text = if app.config.enable_gpu_passthrough && !app.config.single_gpu_enabled {
         "[Space/Enter] Toggle  [g] Auto-select GPU  [s] Save  [p] Prerequisites  [Esc] Back"
     } else {
         "[Space/Enter] Toggle  [s] Save  [Esc] Back"
@@ -88,37 +91,52 @@ pub fn render(app: &App, frame: &mut Frame) {
 
 /// Render the status bar showing prerequisite status
 fn render_status_bar(app: &App, frame: &mut Frame, area: Rect) {
-    let status = app.gpu_status.as_ref();
-
-    let (status_text, status_color) = if let Some(status) = status {
-        if status.is_ready() {
-            (status.summary(), Color::Green)
+    // Handle different GPU passthrough modes
+    let spans = if app.config.single_gpu_enabled {
+        // Single GPU passthrough mode
+        vec![
+            Span::styled(" Mode: ", Style::default().fg(Color::White)),
+            Span::styled("Single GPU Passthrough", Style::default().fg(Color::Cyan)),
+            Span::styled("  (GPU selection managed via Single GPU Setup)", Style::default().fg(Color::DarkGray)),
+        ]
+    } else if app.config.enable_gpu_passthrough {
+        // Multi-GPU passthrough mode - show full status
+        let status = app.gpu_status.as_ref();
+        let (status_text, status_color) = if let Some(status) = status {
+            if status.is_ready() {
+                (status.summary(), Color::Green)
+            } else {
+                (status.summary(), Color::Yellow)
+            }
         } else {
-            (status.summary(), Color::Yellow)
+            ("Status unknown".to_string(), Color::DarkGray)
+        };
+
+        let mut spans = vec![
+            Span::styled(" Status: ", Style::default().fg(Color::White)),
+            Span::styled(status_text, Style::default().fg(status_color)),
+        ];
+
+        // Add quick indicators
+        if let Some(status) = status {
+            spans.push(Span::raw("  |  "));
+            spans.push(Span::styled(
+                "IOMMU",
+                Style::default().fg(if status.iommu_enabled { Color::Green } else { Color::Red }),
+            ));
+            spans.push(Span::raw(" "));
+            spans.push(Span::styled(
+                "VFIO",
+                Style::default().fg(if status.vfio_loaded { Color::Green } else { Color::Red }),
+            ));
         }
+        spans
     } else {
-        ("Status unknown".to_string(), Color::DarkGray)
+        // GPU passthrough disabled - show simple message
+        vec![
+            Span::styled(" Select PCI devices to pass through to the VM", Style::default().fg(Color::DarkGray)),
+        ]
     };
-
-    // Build status line with indicators
-    let mut spans = vec![
-        Span::styled(" Status: ", Style::default().fg(Color::White)),
-        Span::styled(status_text, Style::default().fg(status_color)),
-    ];
-
-    // Add quick indicators
-    if let Some(status) = status {
-        spans.push(Span::raw("  |  "));
-        spans.push(Span::styled(
-            if status.iommu_enabled { "IOMMU" } else { "IOMMU" },
-            Style::default().fg(if status.iommu_enabled { Color::Green } else { Color::Red }),
-        ));
-        spans.push(Span::raw(" "));
-        spans.push(Span::styled(
-            if status.vfio_loaded { "VFIO" } else { "VFIO" },
-            Style::default().fg(if status.vfio_loaded { Color::Green } else { Color::Red }),
-        ));
-    }
 
     let status_para = Paragraph::new(Line::from(spans))
         .block(Block::default().borders(Borders::BOTTOM).border_style(Style::default().fg(Color::DarkGray)));
@@ -485,13 +503,30 @@ pub fn handle_key(app: &mut App, key: crossterm::event::KeyEvent) -> anyhow::Res
             let save_result = save_pci_passthrough(app);
             match save_result {
                 Ok(count) => {
-                    if count > 0 {
-                        app.set_status(format!("Saved {} PCI device(s) to launch.sh", count));
+                    let mut status_msg = if count > 0 {
+                        format!("Saved {} PCI device(s) to launch.sh", count)
                     } else {
-                        app.set_status("Cleared PCI passthrough from launch.sh");
-                    }
+                        "Cleared PCI passthrough from launch.sh".to_string()
+                    };
                     // Reload script
                     app.reload_selected_vm_script();
+
+                    // Regenerate single-GPU scripts if they exist
+                    if let (Some(vm), Some(config)) = (app.selected_vm(), app.single_gpu_config.as_ref()) {
+                        if crate::hardware::scripts_exist(&vm.path) {
+                            match crate::vm::single_gpu_scripts::regenerate_if_exists(vm, config) {
+                                Ok(true) => {
+                                    status_msg.push_str("; single-GPU scripts regenerated");
+                                }
+                                Ok(false) => {} // Scripts don't exist, nothing to regenerate
+                                Err(e) => {
+                                    status_msg.push_str(&format!("; warning: failed to regenerate single-GPU scripts: {}", e));
+                                }
+                            }
+                        }
+                    }
+
+                    app.set_status(status_msg);
                 }
                 Err(e) => {
                     app.set_status(format!("Error saving PCI config: {}", e));
