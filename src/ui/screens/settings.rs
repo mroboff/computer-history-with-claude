@@ -6,7 +6,7 @@
 
 use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::prelude::*;
-use ratatui::widgets::{Block, Borders, List, ListItem, Paragraph, Wrap};
+use ratatui::widgets::{Block, Borders, Clear, List, ListItem, Paragraph, Wrap};
 
 use crate::app::App;
 use crate::config::Config;
@@ -240,6 +240,9 @@ fn build_visible_items(config: &Config) -> Vec<VisibleItem> {
 /// Render the settings screen
 pub fn render(app: &App, frame: &mut Frame) {
     let area = frame.area();
+
+    // Clear the area first to prevent artifacts from underlying screen
+    frame.render_widget(Clear, area);
 
     // Main block
     let block = Block::default()

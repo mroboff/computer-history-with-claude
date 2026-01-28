@@ -7,7 +7,7 @@ use anyhow::{bail, Context, Result};
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use crate::app::{CreateWizardState, WizardQemuConfig};
+use crate::app::{CreateWizardState, DiskAction, WizardQemuConfig};
 use crate::commands::qemu_img;
 
 /// Generate a random UUID for SMBIOS
@@ -126,16 +126,35 @@ pub fn create_vm(library_path: &Path, state: &CreateWizardState) -> Result<Creat
     if state.folder_name.is_empty() {
         bail!("Folder name cannot be empty");
     }
-    if state.disk_size_gb == 0 {
+
+    // Validate disk configuration
+    if state.use_existing_disk {
+        if state.existing_disk_path.is_none() {
+            bail!("No existing disk selected");
+        }
+        let path = state.existing_disk_path.as_ref().unwrap();
+        if !path.exists() {
+            bail!("Selected disk does not exist: {}", path.display());
+        }
+    } else if state.disk_size_gb == 0 {
         bail!("Disk size must be greater than 0");
     }
 
     // Create VM directory
     let vm_dir = create_vm_directory(library_path, &state.folder_name)?;
 
-    // Create disk image
+    // Create or copy/move disk image
     let disk_filename = format!("{}.qcow2", state.folder_name);
-    let disk_path = create_disk_image(&vm_dir, &disk_filename, state.disk_size_gb)?;
+    let disk_path = if state.use_existing_disk {
+        handle_existing_disk(
+            &vm_dir,
+            &disk_filename,
+            state.existing_disk_path.as_ref().unwrap(),
+            &state.existing_disk_action,
+        )?
+    } else {
+        create_disk_image(&vm_dir, &disk_filename, state.disk_size_gb)?
+    };
 
     // Generate and write launch script with OS-awareness
     let script_content = generate_launch_script_with_os(
@@ -155,6 +174,46 @@ pub fn create_vm(library_path: &Path, state: &CreateWizardState) -> Result<Creat
         launch_script: launch_script_path,
         disk_image: disk_path,
     })
+}
+
+/// Handle an existing disk by copying or moving it to the VM directory
+fn handle_existing_disk(
+    vm_dir: &Path,
+    filename: &str,
+    source: &Path,
+    action: &DiskAction,
+) -> Result<PathBuf> {
+    let dest = vm_dir.join(filename);
+
+    match action {
+        DiskAction::Copy => {
+            fs::copy(source, &dest)
+                .with_context(|| format!(
+                    "Failed to copy disk from {} to {}",
+                    source.display(),
+                    dest.display()
+                ))?;
+        }
+        DiskAction::Move => {
+            // Try rename first (works if on same filesystem)
+            if fs::rename(source, &dest).is_err() {
+                // Rename failed (likely different filesystem), fall back to copy+delete
+                fs::copy(source, &dest)
+                    .with_context(|| format!(
+                        "Failed to copy disk from {} to {}",
+                        source.display(),
+                        dest.display()
+                    ))?;
+                fs::remove_file(source)
+                    .with_context(|| format!(
+                        "Failed to remove original disk after copying: {}",
+                        source.display()
+                    ))?;
+            }
+        }
+    }
+
+    Ok(dest)
 }
 
 /// Write VM metadata file (vm-curator.toml)

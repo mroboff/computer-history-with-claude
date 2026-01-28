@@ -10,6 +10,10 @@ Please see [discussion](https://github.com/mroboff/vm-curator/discussions/11) fo
 
 ### Changelog
 
+**v0.2.2**
+- Add existing disk selection to VM creation wizard (copy or move existing qcow2 files)
+- Fix Settings screen overlapping pane artifacts
+
 **v0.2.1**
 - Fix UI rendering artifacts after closing Settings screen and during search filtering
 

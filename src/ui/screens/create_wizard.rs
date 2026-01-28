@@ -1066,7 +1066,7 @@ fn handle_step_select_iso(app: &mut App, key: KeyEvent) -> Result<()> {
                 }
                 1 => {
                     // Browse for ISO - open file browser
-                    app.load_file_browser();
+                    app.load_file_browser(crate::app::FileBrowserMode::Iso);
                     app.push_screen(crate::app::Screen::FileBrowser);
                 }
                 2 => {
@@ -1106,9 +1106,9 @@ fn render_step_configure_disk(app: &App, frame: &mut Frame, area: Rect) {
         .constraints([
             Constraint::Length(1),   // Header
             Constraint::Length(1),   // Spacer
-            Constraint::Length(3),   // Disk size input
+            Constraint::Length(1),   // Disk source toggle
             Constraint::Length(1),   // Spacer
-            Constraint::Min(6),      // Disk info
+            Constraint::Min(10),     // Mode-specific content
             Constraint::Length(2),   // Help
         ])
         .split(inner);
@@ -1118,14 +1118,97 @@ fn render_step_configure_disk(app: &App, frame: &mut Frame, area: Rect) {
         .style(Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD));
     frame.render_widget(header, chunks[0]);
 
-    // Disk size input
+    // Disk source toggle (field_focus == 0)
+    let source_focused = state.field_focus == 0;
+    let create_style = if !state.use_existing_disk {
+        Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)
+    } else {
+        Style::default().fg(Color::DarkGray)
+    };
+    let existing_style = if state.use_existing_disk {
+        Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)
+    } else {
+        Style::default().fg(Color::DarkGray)
+    };
+    let prefix = if source_focused { "> " } else { "  " };
+
+    let source_line = Line::from(vec![
+        Span::styled(prefix, if source_focused { Style::default().fg(Color::Yellow) } else { Style::default() }),
+        Span::styled("Disk Source: ", Style::default().fg(Color::Yellow)),
+        Span::styled("[ ", Style::default()),
+        Span::styled("Create New", create_style),
+        Span::styled(" ] [ ", Style::default()),
+        Span::styled("Use Existing", existing_style),
+        Span::styled(" ]", Style::default()),
+        if source_focused {
+            Span::styled("  [←/→] toggle", Style::default().fg(Color::DarkGray))
+        } else {
+            Span::raw("")
+        },
+    ]);
+    let source_toggle = Paragraph::new(source_line);
+    frame.render_widget(source_toggle, chunks[2]);
+
+    // Mode-specific content area
+    let content_area = chunks[4];
+
+    if state.use_existing_disk {
+        // "Use Existing" mode
+        render_existing_disk_mode(app, frame, content_area);
+    } else {
+        // "Create New" mode (existing behavior)
+        render_new_disk_mode(app, frame, content_area);
+    }
+
+    // Help
+    let help_text = if state.use_existing_disk {
+        if state.field_focus == 0 {
+            "[←/→] Toggle mode  [j/k] Navigate  [Enter] Next  [Esc] Back"
+        } else if state.field_focus == 1 {
+            "[Enter] Browse  [j/k] Navigate  [Esc] Back"
+        } else {
+            "[←/→] Toggle action  [j/k] Navigate  [Enter] Next  [Esc] Back"
+        }
+    } else {
+        let editing = matches!(state.editing_field, Some(WizardField::DiskSize));
+        if editing {
+            "[Enter] Done  [Backspace] Delete  [0-9] Enter size"
+        } else if state.field_focus == 0 {
+            "[←/→] Toggle mode  [j/k] Navigate  [Enter] Next  [Esc] Back"
+        } else {
+            "[Tab] Edit size  [←/→] Adjust  [Enter] Next  [Esc] Back"
+        }
+    };
+    let help = Paragraph::new(help_text)
+        .style(Style::default().fg(Color::DarkGray))
+        .alignment(Alignment::Center);
+    frame.render_widget(help, chunks[5]);
+}
+
+/// Render the "Create New" disk mode content
+fn render_new_disk_mode(app: &App, frame: &mut Frame, area: Rect) {
+    let state = app.wizard_state.as_ref().unwrap();
+
+    let sub_chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(3),   // Disk size input
+            Constraint::Length(1),   // Spacer
+            Constraint::Min(5),      // Disk info
+        ])
+        .split(area);
+
+    // Disk size input (field_focus == 1 when in new disk mode)
+    let size_focused = state.field_focus == 1;
     let editing = matches!(state.editing_field, Some(WizardField::DiskSize));
     let size_style = if editing {
         Style::default().fg(Color::Yellow)
+    } else if size_focused {
+        Style::default().fg(Color::White).add_modifier(Modifier::BOLD)
     } else {
         Style::default().fg(Color::White)
     };
-    let border_style = if editing {
+    let border_style = if editing || size_focused {
         Style::default().fg(Color::Yellow)
     } else {
         Style::default().fg(Color::Gray)
@@ -1143,7 +1226,7 @@ fn render_step_configure_disk(app: &App, frame: &mut Frame, area: Rect) {
     let size_text = Paragraph::new(format!("{} GB", state.disk_size_gb))
         .style(size_style)
         .block(size_block);
-    frame.render_widget(size_text, chunks[2]);
+    frame.render_widget(size_text, sub_chunks[0]);
 
     // Disk info box
     let info_block = Block::default()
@@ -1174,26 +1257,112 @@ fn render_step_configure_disk(app: &App, frame: &mut Frame, area: Rect) {
     let info = Paragraph::new(info_text)
         .block(info_block)
         .wrap(Wrap { trim: false });
-    frame.render_widget(info, chunks[4]);
+    frame.render_widget(info, sub_chunks[2]);
+}
 
-    // Help
-    let help_text = if editing {
-        "[Enter] Done  [Backspace] Delete  [0-9] Enter size"
+/// Render the "Use Existing" disk mode content
+fn render_existing_disk_mode(app: &App, frame: &mut Frame, area: Rect) {
+    use crate::app::DiskAction;
+
+    let state = app.wizard_state.as_ref().unwrap();
+
+    let sub_chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(3),   // Browse / selected path
+            Constraint::Length(1),   // Spacer
+            Constraint::Length(1),   // Action toggle
+            Constraint::Length(1),   // Spacer
+            Constraint::Min(3),      // Note
+        ])
+        .split(area);
+
+    // Browse button / selected path (field_focus == 1)
+    let browse_focused = state.field_focus == 1;
+    let browse_border = if browse_focused {
+        Style::default().fg(Color::Yellow)
     } else {
-        "[Tab] Edit size  [Left/Right] Adjust  [Enter] Next  [Esc] Back"
+        Style::default().fg(Color::Gray)
     };
-    let help = Paragraph::new(help_text)
-        .style(Style::default().fg(Color::DarkGray))
-        .alignment(Alignment::Center);
-    frame.render_widget(help, chunks[5]);
+
+    let browse_block = Block::default()
+        .title(" Disk Image ")
+        .borders(Borders::ALL)
+        .border_style(browse_border);
+
+    let browse_inner = browse_block.inner(sub_chunks[0]);
+    frame.render_widget(browse_block, sub_chunks[0]);
+
+    let browse_text = if let Some(ref path) = state.existing_disk_path {
+        let path_str = path.display().to_string();
+        // Truncate path if too long
+        let max_len = browse_inner.width as usize - 2;
+        let display = if path_str.len() > max_len {
+            format!("...{}", &path_str[path_str.len() - max_len + 3..])
+        } else {
+            path_str
+        };
+        Paragraph::new(display).style(Style::default().fg(Color::Green))
+    } else {
+        let prefix = if browse_focused { "> " } else { "  " };
+        Paragraph::new(format!("{}( ) Browse for qcow2 disk file...", prefix))
+            .style(if browse_focused {
+                Style::default().fg(Color::Yellow)
+            } else {
+                Style::default().fg(Color::White)
+            })
+    };
+    frame.render_widget(browse_text, browse_inner);
+
+    // Action toggle (field_focus == 2)
+    let action_focused = state.field_focus == 2;
+    let copy_style = if matches!(state.existing_disk_action, DiskAction::Copy) {
+        Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)
+    } else {
+        Style::default().fg(Color::DarkGray)
+    };
+    let move_style = if matches!(state.existing_disk_action, DiskAction::Move) {
+        Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)
+    } else {
+        Style::default().fg(Color::DarkGray)
+    };
+    let prefix = if action_focused { "> " } else { "  " };
+
+    let action_line = Line::from(vec![
+        Span::styled(prefix, if action_focused { Style::default().fg(Color::Yellow) } else { Style::default() }),
+        Span::styled("Action: ", Style::default().fg(Color::Yellow)),
+        Span::styled("[ ", Style::default()),
+        Span::styled("Copy to VM folder", copy_style),
+        Span::styled(" ] [ ", Style::default()),
+        Span::styled("Move to VM folder", move_style),
+        Span::styled(" ]", Style::default()),
+    ]);
+    let action_toggle = Paragraph::new(action_line);
+    frame.render_widget(action_toggle, sub_chunks[2]);
+
+    // Note about renaming
+    let note_text = format!(
+        "Note: The disk will be renamed to {}.qcow2",
+        state.folder_name
+    );
+    let note = Paragraph::new(note_text)
+        .style(Style::default().fg(Color::DarkGray));
+    frame.render_widget(note, sub_chunks[4]);
 }
 
 fn handle_step_configure_disk(app: &mut App, key: KeyEvent) -> Result<()> {
-    let editing = app.wizard_state.as_ref()
-        .map(|s| matches!(s.editing_field, Some(WizardField::DiskSize)))
-        .unwrap_or(false);
+    use crate::app::{DiskAction, FileBrowserMode};
 
-    if editing {
+    let (editing, use_existing, field_focus) = app.wizard_state.as_ref()
+        .map(|s| (
+            matches!(s.editing_field, Some(WizardField::DiskSize)),
+            s.use_existing_disk,
+            s.field_focus,
+        ))
+        .unwrap_or((false, false, 0));
+
+    // Handle disk size editing mode (only in "Create New" mode)
+    if editing && !use_existing {
         match key.code {
             KeyCode::Esc | KeyCode::Enter | KeyCode::Tab => {
                 if let Some(ref mut state) = app.wizard_state {
@@ -1217,31 +1386,78 @@ fn handle_step_configure_disk(app: &mut App, key: KeyEvent) -> Result<()> {
             }
             _ => {}
         }
-    } else {
-        match key.code {
-            KeyCode::Esc => {
-                app.wizard_prev_step();
+        return Ok(());
+    }
+
+    // Normal navigation mode
+    match key.code {
+        KeyCode::Esc => {
+            app.wizard_prev_step();
+        }
+        KeyCode::Char('j') | KeyCode::Down => {
+            if let Some(ref mut state) = app.wizard_state {
+                let max_focus = if state.use_existing_disk { 2 } else { 1 };
+                if state.field_focus < max_focus {
+                    state.field_focus += 1;
+                }
             }
-            KeyCode::Tab => {
+        }
+        KeyCode::Char('k') | KeyCode::Up => {
+            if let Some(ref mut state) = app.wizard_state {
+                if state.field_focus > 0 {
+                    state.field_focus -= 1;
+                }
+            }
+        }
+        KeyCode::Left | KeyCode::Right => {
+            if let Some(ref mut state) = app.wizard_state {
+                match state.field_focus {
+                    0 => {
+                        // Toggle disk source mode
+                        state.use_existing_disk = !state.use_existing_disk;
+                    }
+                    1 if !state.use_existing_disk => {
+                        // Adjust disk size (Create New mode)
+                        if key.code == KeyCode::Left {
+                            state.disk_size_gb = state.disk_size_gb.saturating_sub(8).max(1);
+                        } else {
+                            state.disk_size_gb = (state.disk_size_gb + 8).min(10000);
+                        }
+                    }
+                    2 if state.use_existing_disk => {
+                        // Toggle copy/move action
+                        state.existing_disk_action = match state.existing_disk_action {
+                            DiskAction::Copy => DiskAction::Move,
+                            DiskAction::Move => DiskAction::Copy,
+                        };
+                    }
+                    _ => {}
+                }
+            }
+        }
+        KeyCode::Tab => {
+            // Enter edit mode for disk size (Create New mode only)
+            if !use_existing && field_focus == 1 {
                 if let Some(ref mut state) = app.wizard_state {
                     state.editing_field = Some(WizardField::DiskSize);
                 }
             }
-            KeyCode::Left => {
-                if let Some(ref mut state) = app.wizard_state {
-                    state.disk_size_gb = state.disk_size_gb.saturating_sub(8).max(1);
-                }
-            }
-            KeyCode::Right => {
-                if let Some(ref mut state) = app.wizard_state {
-                    state.disk_size_gb = (state.disk_size_gb + 8).min(10000);
-                }
-            }
-            KeyCode::Enter => {
-                let _ = app.wizard_next_step();
-            }
-            _ => {}
         }
+        KeyCode::Enter => {
+            // If on browse button in existing mode, open file browser
+            if use_existing && field_focus == 1 {
+                app.load_file_browser(FileBrowserMode::Disk);
+                app.push_screen(crate::app::Screen::FileBrowser);
+            } else {
+                // Try to proceed to next step
+                if let Err(e) = app.wizard_next_step() {
+                    if let Some(ref mut state) = app.wizard_state {
+                        state.error_message = Some(e);
+                    }
+                }
+            }
+        }
+        _ => {}
     }
     Ok(())
 }

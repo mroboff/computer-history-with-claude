@@ -850,6 +850,8 @@ fn handle_snapshots(app: &mut App, key: KeyEvent) -> Result<()> {
 }
 
 fn handle_boot_options(app: &mut App, key: KeyEvent) -> Result<()> {
+    use crate::app::FileBrowserMode;
+
     match key.code {
         KeyCode::Esc => app.pop_screen(),
         KeyCode::Char('j') | KeyCode::Down => app.menu_next(3),
@@ -875,7 +877,7 @@ fn handle_boot_options(app: &mut App, key: KeyEvent) -> Result<()> {
                 }
                 2 => {
                     // Open file browser for ISO selection
-                    app.load_file_browser();
+                    app.load_file_browser(FileBrowserMode::Iso);
                     app.push_screen(Screen::FileBrowser);
                 }
                 _ => {}
@@ -1281,6 +1283,7 @@ fn render_search(app: &App, frame: &mut Frame) {
 fn render_file_browser(app: &App, frame: &mut Frame) {
     use ratatui::widgets::{Block, Borders, Clear, List, ListItem, ListState};
     use ratatui::layout::{Layout, Direction, Constraint};
+    use crate::app::FileBrowserMode;
 
     let area = frame.area();
     let dialog_width = 60.min(area.width.saturating_sub(4));
@@ -1289,7 +1292,11 @@ fn render_file_browser(app: &App, frame: &mut Frame) {
     let dialog_area = centered_rect(dialog_width, dialog_height, area);
     frame.render_widget(Clear, dialog_area);
 
-    let title = format!(" Select ISO - {} ", app.file_browser_dir.display());
+    let title_prefix = match app.file_browser_mode {
+        FileBrowserMode::Iso => "Select ISO",
+        FileBrowserMode::Disk => "Select Disk Image",
+    };
+    let title = format!(" {} - {} ", title_prefix, app.file_browser_dir.display());
     let block = Block::default()
         .title(title)
         .borders(Borders::ALL)
@@ -1321,7 +1328,11 @@ fn render_file_browser(app: &App, frame: &mut Frame) {
     let content_area = v_chunks[1];
 
     if app.file_browser_entries.is_empty() {
-        let msg = ratatui::widgets::Paragraph::new("No ISO files found in this directory.")
+        let msg_text = match app.file_browser_mode {
+            FileBrowserMode::Iso => "No ISO files found in this directory.",
+            FileBrowserMode::Disk => "No disk images found in this directory.",
+        };
+        let msg = ratatui::widgets::Paragraph::new(msg_text)
             .style(Style::default().fg(Color::DarkGray))
             .alignment(Alignment::Center);
         frame.render_widget(msg, content_area);
@@ -1351,28 +1362,41 @@ fn render_file_browser(app: &App, frame: &mut Frame) {
 }
 
 fn handle_file_browser(app: &mut App, key: KeyEvent) -> Result<()> {
+    use crate::app::FileBrowserMode;
+
     match key.code {
         KeyCode::Esc => app.pop_screen(),
         KeyCode::Char('j') | KeyCode::Down => app.file_browser_next(),
         KeyCode::Char('k') | KeyCode::Up => app.file_browser_prev(),
         KeyCode::Enter => {
-            if let Some(iso_path) = app.file_browser_enter() {
-                // Check if we're in wizard mode
-                if app.wizard_state.is_some() {
-                    // Set the ISO path in wizard state
-                    if let Some(ref mut state) = app.wizard_state {
-                        state.iso_path = Some(iso_path);
-                    }
-                    app.pop_screen(); // Close file browser
+            if let Some(selected_path) = app.file_browser_enter() {
+                match app.file_browser_mode {
+                    FileBrowserMode::Iso => {
+                        // Check if we're in wizard mode
+                        if app.wizard_state.is_some() {
+                            // Set the ISO path in wizard state
+                            if let Some(ref mut state) = app.wizard_state {
+                                state.iso_path = Some(selected_path);
+                            }
+                            app.pop_screen(); // Close file browser
 
-                    // Proceed to next step
-                    let _ = app.wizard_next_step();
-                } else {
-                    // Normal boot mode - selected an ISO file
-                    app.boot_mode = BootMode::Cdrom(iso_path);
-                    app.pop_screen(); // Close file browser
-                    app.pop_screen(); // Close boot options
-                    app.push_screen(Screen::Confirm(ConfirmAction::LaunchVm));
+                            // Proceed to next step
+                            let _ = app.wizard_next_step();
+                        } else {
+                            // Normal boot mode - selected an ISO file
+                            app.boot_mode = BootMode::Cdrom(selected_path);
+                            app.pop_screen(); // Close file browser
+                            app.pop_screen(); // Close boot options
+                            app.push_screen(Screen::Confirm(ConfirmAction::LaunchVm));
+                        }
+                    }
+                    FileBrowserMode::Disk => {
+                        // Selected a disk file - must be in wizard mode
+                        if let Some(ref mut state) = app.wizard_state {
+                            state.existing_disk_path = Some(selected_path);
+                        }
+                        app.pop_screen(); // Close file browser, return to disk config step
+                    }
                 }
             }
             // If it was a directory, file_browser_enter already navigated

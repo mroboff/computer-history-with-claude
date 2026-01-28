@@ -88,6 +88,22 @@ pub enum InputMode {
     Editing,
 }
 
+/// File browser mode (determines file filter and behavior)
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum FileBrowserMode {
+    #[default]
+    Iso,
+    Disk,
+}
+
+/// Action to take with an existing disk when using it for a new VM
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum DiskAction {
+    #[default]
+    Copy,
+    Move,
+}
+
 /// Steps in the VM creation wizard
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub enum WizardStep {
@@ -292,8 +308,14 @@ pub struct CreateWizardState {
     pub iso_downloading: bool,
     /// ISO download progress (0.0 - 1.0)
     pub iso_download_progress: f32,
-    /// Disk size in gigabytes
+    /// Disk size in gigabytes (for new disk creation)
     pub disk_size_gb: u32,
+    /// Whether to use an existing disk instead of creating a new one
+    pub use_existing_disk: bool,
+    /// Path to an existing disk to use
+    pub existing_disk_path: Option<PathBuf>,
+    /// Action to take with existing disk (copy or move)
+    pub existing_disk_action: DiskAction,
     /// QEMU configuration
     pub qemu_config: WizardQemuConfig,
     /// Auto-launch VM after creation
@@ -346,6 +368,9 @@ impl Default for CreateWizardState {
             iso_downloading: false,
             iso_download_progress: 0.0,
             disk_size_gb: 32,
+            use_existing_disk: false,
+            existing_disk_path: None,
+            existing_disk_action: DiskAction::Copy,
             qemu_config: WizardQemuConfig::default(),
             auto_launch: true,
             field_focus: 0,
@@ -448,11 +473,24 @@ impl CreateWizardState {
                 Ok(())
             }
             WizardStep::ConfigureDisk => {
-                if self.disk_size_gb == 0 {
-                    return Err("Disk size must be greater than 0".to_string());
-                }
-                if self.disk_size_gb > 10000 {
-                    return Err("Disk size cannot exceed 10TB".to_string());
+                if self.use_existing_disk {
+                    // Validate existing disk path
+                    match &self.existing_disk_path {
+                        None => return Err("Please select an existing disk".to_string()),
+                        Some(path) => {
+                            if !path.exists() {
+                                return Err(format!("Disk file not found: {}", path.display()));
+                            }
+                        }
+                    }
+                } else {
+                    // Validate new disk size
+                    if self.disk_size_gb == 0 {
+                        return Err("Disk size must be greater than 0".to_string());
+                    }
+                    if self.disk_size_gb > 10000 {
+                        return Err("Disk size cannot exceed 10TB".to_string());
+                    }
                 }
                 Ok(())
             }
@@ -540,6 +578,8 @@ pub struct App {
     pub file_browser_entries: Vec<FileBrowserEntry>,
     /// File browser selected index
     pub file_browser_selected: usize,
+    /// File browser mode (determines file filter and behavior)
+    pub file_browser_mode: FileBrowserMode,
     /// Text input buffer (for dialogs)
     pub text_input_buffer: String,
     /// Channel for background operation results
@@ -685,6 +725,7 @@ impl App {
             file_browser_dir: dirs::home_dir().unwrap_or_else(|| PathBuf::from("/")),
             file_browser_entries: Vec::new(),
             file_browser_selected: 0,
+            file_browser_mode: FileBrowserMode::Iso,
             text_input_buffer: String::new(),
             background_rx,
             background_tx,
@@ -1003,9 +1044,16 @@ impl App {
     }
 
     /// Load file browser entries for current directory
-    pub fn load_file_browser(&mut self) {
+    pub fn load_file_browser(&mut self, mode: FileBrowserMode) {
+        self.file_browser_mode = mode;
         self.file_browser_entries.clear();
         self.file_browser_selected = 0;
+
+        // Determine file extensions to filter by based on mode
+        let extensions: &[&str] = match mode {
+            FileBrowserMode::Iso => &[".iso", ".ISO"],
+            FileBrowserMode::Disk => &[".qcow2", ".QCOW2", ".qcow", ".QCOW"],
+        };
 
         // Add parent directory entry if not at root
         if let Some(parent) = self.file_browser_dir.parent() {
@@ -1035,7 +1083,7 @@ impl App {
                     };
                     if metadata.is_dir() {
                         dirs.push(entry);
-                    } else if entry.name.ends_with(".iso") || entry.name.ends_with(".ISO") {
+                    } else if extensions.iter().any(|ext| entry.name.ends_with(ext)) {
                         files.push(entry);
                     }
                 }
@@ -1055,7 +1103,9 @@ impl App {
         if let Some(entry) = self.file_browser_entries.get(self.file_browser_selected) {
             if entry.is_dir {
                 self.file_browser_dir = entry.path.clone();
-                self.load_file_browser();
+                // Preserve the current mode when navigating directories
+                let mode = self.file_browser_mode;
+                self.load_file_browser(mode);
                 None
             } else {
                 // Return selected file
