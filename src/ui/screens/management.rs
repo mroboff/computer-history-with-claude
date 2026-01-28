@@ -4,18 +4,123 @@ use ratatui::{
 };
 
 use crate::app::App;
+use crate::config::Config;
+use crate::vm::DiscoveredVm;
 
-/// Management menu items
-pub const MENU_ITEMS: &[&str] = &[
-    "Boot Options",
-    "Snapshots",
-    "USB Passthrough",
-    "Change Display",
-    "Rename VM",
-    "Reset VM (recreate disk)",
-    "Delete VM",
-    "Edit Raw Configuration",
-];
+/// Menu item with name and description
+#[derive(Debug, Clone)]
+pub struct MenuItem {
+    pub name: &'static str,
+    pub description: &'static str,
+    pub action: MenuAction,
+}
+
+/// Actions that can be performed from the management menu
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MenuAction {
+    BootOptions,
+    Snapshots,
+    UsbPassthrough,
+    PciPassthrough,
+    MultiGpuPassthrough,
+    SingleGpuPassthrough,
+    ChangeDisplay,
+    RenameVm,
+    ResetVm,
+    DeleteVm,
+    EditRawConfig,
+}
+
+/// Get menu items based on config and VM state
+pub fn get_menu_items(vm: &DiscoveredVm, config: &Config) -> Vec<MenuItem> {
+    let mut items = vec![
+        MenuItem {
+            name: "Boot Options",
+            description: "Normal, install, or custom ISO boot",
+            action: MenuAction::BootOptions,
+        },
+        MenuItem {
+            name: "Snapshots",
+            description: "Create, restore, or delete snapshots",
+            action: MenuAction::Snapshots,
+        },
+        MenuItem {
+            name: "USB Passthrough",
+            description: "Pass USB devices to the VM",
+            action: MenuAction::UsbPassthrough,
+        },
+        MenuItem {
+            name: "PCI Passthrough",
+            description: "Pass PCI devices to the VM",
+            action: MenuAction::PciPassthrough,
+        },
+    ];
+
+    // Add Multi-GPU Passthrough option if enabled in settings
+    if config.enable_gpu_passthrough {
+        items.push(MenuItem {
+            name: "Multi-GPU Passthrough",
+            description: "Pass a secondary GPU to the VM with Looking Glass",
+            action: MenuAction::MultiGpuPassthrough,
+        });
+    }
+
+    // Add Single GPU Passthrough option if enabled in settings
+    if config.single_gpu_enabled {
+        items.push(MenuItem {
+            name: "Single GPU Passthrough",
+            description: "Configure passthrough for your primary GPU",
+            action: MenuAction::SingleGpuPassthrough,
+        });
+    }
+
+    items.extend([
+        MenuItem {
+            name: "Change Display",
+            description: "GTK, SDL, SPICE, or VNC output",
+            action: MenuAction::ChangeDisplay,
+        },
+        MenuItem {
+            name: "Rename VM",
+            description: "Change the VM's display name",
+            action: MenuAction::RenameVm,
+        },
+    ]);
+
+    // Add dangerous operations at the end
+    items.extend([
+        MenuItem {
+            name: "Reset VM (recreate disk)",
+            description: "Restore VM to fresh state",
+            action: MenuAction::ResetVm,
+        },
+        MenuItem {
+            name: "Delete VM",
+            description: "Permanently remove this VM",
+            action: MenuAction::DeleteVm,
+        },
+        MenuItem {
+            name: "Edit Raw Configuration",
+            description: "Edit the launch.sh script directly",
+            action: MenuAction::EditRawConfig,
+        },
+    ]);
+
+    // Check for GPU passthrough script
+    let _has_gpu_script = vm.path.join("launch-with-gpu-passthrough.sh").exists();
+    // Future: Add "Launch with GPU Passthrough" or "Remove GPU Passthrough" based on this
+
+    items
+}
+
+/// Get the count of menu items (for navigation bounds)
+pub fn menu_item_count(app: &App) -> usize {
+    if let Some(vm) = app.selected_vm() {
+        get_menu_items(vm, &app.config).len()
+    } else {
+        6 // Default count
+    }
+}
 
 /// Display options available for VMs
 pub const DISPLAY_OPTIONS: &[(&str, &str)] = &[
@@ -29,10 +134,17 @@ pub const DISPLAY_OPTIONS: &[(&str, &str)] = &[
 pub fn render(app: &App, frame: &mut Frame) {
     let area = frame.area();
 
-    // Calculate dialog size
-    // Height: 8 items × 2 lines + 1 top padding + 2 help + 2 borders = 23 lines
+    // Get dynamic menu items
+    let menu_items = if let Some(vm) = app.selected_vm() {
+        get_menu_items(vm, &app.config)
+    } else {
+        Vec::new()
+    };
+
+    // Calculate dialog size - adjust height based on item count
     let dialog_width = 50.min(area.width.saturating_sub(4));
-    let dialog_height = 24.min(area.height.saturating_sub(4));
+    let item_count = menu_items.len();
+    let dialog_height = (6 + item_count * 2).min(area.height.saturating_sub(4) as usize) as u16;
 
     let dialog_area = centered_rect(dialog_width, dialog_height, area);
 
@@ -73,22 +185,10 @@ pub fn render(app: &App, frame: &mut Frame) {
         .split(h_chunks[1]);
 
     // Create menu items with descriptions
-    let items: Vec<ListItem> = MENU_ITEMS
+    let items: Vec<ListItem> = menu_items
         .iter()
         .enumerate()
-        .map(|(i, &item)| {
-            let description = match i {
-                0 => "Normal, install, or custom ISO boot",
-                1 => "Create, restore, or delete snapshots",
-                2 => "Pass USB devices to the VM",
-                3 => "GTK, SDL, SPICE, or VNC output",
-                4 => "Change the VM's display name",
-                5 => "Restore VM to fresh state",
-                6 => "Permanently remove this VM",
-                7 => "Edit the launch.sh script directly",
-                _ => "",
-            };
-
+        .map(|(i, item)| {
             let style = if i == app.selected_menu_item {
                 Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
             } else {
@@ -96,9 +196,9 @@ pub fn render(app: &App, frame: &mut Frame) {
             };
 
             let content = vec![
-                Line::styled(format!("[{}] {}", i + 1, item), style),
+                Line::styled(format!("[{}] {}", i + 1, item.name), style),
                 Line::styled(
-                    format!("    {}", description),
+                    format!("    {}", item.description),
                     Style::default().fg(Color::DarkGray),
                 ),
             ];

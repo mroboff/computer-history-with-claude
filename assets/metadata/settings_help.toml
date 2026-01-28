@@ -1,0 +1,105 @@
+# Settings Help Text
+#
+# This file contains contextual help text for the Settings screen.
+# Users can override entries by creating a file at:
+#   ~/.config/vm-curator/metadata/settings_help.toml
+
+[vm_library_path]
+title = "VM Library Path"
+description = """
+The directory where your VMs are stored. Each VM lives in its own subdirectory \
+containing a launch.sh script and disk images. You can use ~ for your home directory."""
+
+[default_memory]
+title = "Default Memory"
+description = """
+RAM to allocate for new VMs (in MB). 2048-4096 MB works for most OSes. \
+Windows 10+ and modern Linux benefit from 4096+."""
+
+[default_cpu_cores]
+title = "Default CPU Cores"
+description = """
+CPU cores for new VMs. 2-4 is usually sufficient. Don't exceed your physical \
+core count minus 1-2 for host stability."""
+
+[default_disk_size]
+title = "Default Disk Size"
+description = """
+Virtual disk size (in GB). Disks use qcow2 format and grow as needed, \
+so larger sizes don't immediately use space."""
+
+[default_display]
+title = "Default Display"
+description = """
+How VM windows are displayed. GTK: native look. SDL: lightweight. \
+Spice: best for remote access and Looking Glass."""
+
+[default_enable_kvm]
+title = "Enable KVM"
+description = """
+Hardware-accelerated virtualization for near-native performance. \
+Requires Intel VT-x or AMD-V CPU. Strongly recommended."""
+
+[confirm_before_launch]
+title = "Confirm Before Launch"
+description = """
+Show confirmation before launching VMs. Helps prevent accidental launches \
+with passthrough configurations."""
+
+[gpu_passthrough_header]
+title = "GPU Passthrough"
+description = """
+Configure GPU passthrough for gaming VMs. Requires IOMMU support and \
+proper VFIO configuration."""
+
+[gpu_passthrough_disabled]
+title = "Disabled"
+description = """
+Standard virtualized graphics using emulated VGA (virtio-vga, QXL). \
+Good for general use, not for gaming."""
+
+[enable_multi_gpu_passthrough]
+title = "Multiple GPUs"
+description = """
+Pass a secondary GPU to the VM while keeping primary for host. \
+Ideal for gaming VMs on multi-GPU systems."""
+
+[multi_gpu_ivshmem_size]
+title = "IVSHMEM Size"
+description = """
+Shared memory for Looking Glass (MB). 32MB for 1080p, 64MB for 1440p, \
+128MB for 4K. Must be power of 2."""
+
+[show_gpu_warnings]
+title = "Show GPU Warnings"
+description = """
+Display warnings when GPU passthrough prerequisites are not met."""
+
+[auto_launch_looking_glass]
+title = "Auto-launch Looking Glass"
+description = """
+Auto-start Looking Glass client after VM boots for zero-latency GPU display."""
+
+[enable_single_gpu_passthrough]
+title = "Single GPU"
+description = """
+Temporarily unbinds your only GPU and passes it to the VM. \
+Must run from TTY, stops display manager."""
+
+[single_gpu_run_setup]
+title = "Run System Setup"
+description = """
+One-time system configuration for single-GPU passthrough. Creates \
+/etc/modules-load.d/vfio.conf and /etc/modprobe.d/vfio.conf, then \
+regenerates initramfs. Requires root and a reboot to take effect."""
+
+[single_gpu_auto_tty]
+title = "Auto TTY Switch"
+description = """
+EXPERIMENTAL: Auto-switch TTY when starting/stopping VM. \
+May not work with all setups."""
+
+[default]
+title = "Settings"
+description = """
+Select a setting to see its description."""

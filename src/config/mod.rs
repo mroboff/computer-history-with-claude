@@ -30,6 +30,26 @@ pub struct Config {
     // === Behavior ===
     /// Show confirmation dialog before launching VMs
     pub confirm_before_launch: bool,
+
+    // === GPU Passthrough ===
+    /// Enable GPU passthrough features in the UI
+    pub enable_gpu_passthrough: bool,
+    /// Default IVSHMEM size in MB for Looking Glass
+    pub default_ivshmem_size_mb: u32,
+    /// Show GPU passthrough warnings
+    pub show_gpu_warnings: bool,
+
+    // === Single GPU Passthrough ===
+    /// Enable single GPU passthrough options (for systems with only one GPU)
+    pub single_gpu_enabled: bool,
+    /// Experimental: Auto switch to TTY and back (requires additional setup)
+    pub single_gpu_auto_tty: bool,
+    /// Override auto-detected display manager (gdm, sddm, lightdm)
+    pub single_gpu_dm_override: Option<String>,
+    /// Path to Looking Glass client executable
+    pub looking_glass_client_path: Option<PathBuf>,
+    /// Auto-launch Looking Glass client when VM starts
+    pub looking_glass_auto_launch: bool,
 }
 
 impl Default for Config {
@@ -54,6 +74,18 @@ impl Default for Config {
 
             // Behavior
             confirm_before_launch: true,
+
+            // GPU Passthrough
+            enable_gpu_passthrough: false,
+            default_ivshmem_size_mb: 64,
+            show_gpu_warnings: true,
+
+            // Single GPU Passthrough
+            single_gpu_enabled: false,
+            single_gpu_auto_tty: false,
+            single_gpu_dm_override: None,
+            looking_glass_client_path: None,
+            looking_glass_auto_launch: true,
         }
     }
 }

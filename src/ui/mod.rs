@@ -337,6 +337,26 @@ fn render(app: &App, frame: &mut Frame) {
             render_dim_overlay(frame);
             render_usb_devices(app, frame);
         }
+        Screen::PciPassthrough => {
+            screens::main_menu::render(app, frame);
+            render_dim_overlay(frame);
+            screens::pci_passthrough::render(app, frame);
+        }
+        Screen::SingleGpuSetup => {
+            screens::main_menu::render(app, frame);
+            render_dim_overlay(frame);
+            screens::single_gpu_setup::render(app, frame);
+        }
+        Screen::SingleGpuInstructions => {
+            screens::main_menu::render(app, frame);
+            render_dim_overlay(frame);
+            screens::single_gpu_setup::render_instructions(app, frame);
+        }
+        Screen::MultiGpuSetup => {
+            screens::main_menu::render(app, frame);
+            render_dim_overlay(frame);
+            screens::multi_gpu_setup::render(app, frame);
+        }
         Screen::Confirm(action) => {
             screens::main_menu::render(app, frame);
             render_dim_overlay(frame);
@@ -414,6 +434,10 @@ fn handle_key(app: &mut App, key: KeyEvent) -> Result<()> {
         Screen::BootOptions => handle_boot_options(app, key)?,
         Screen::DisplayOptions => handle_display_options(app, key)?,
         Screen::UsbDevices => handle_usb_devices(app, key)?,
+        Screen::PciPassthrough => screens::pci_passthrough::handle_key(app, key)?,
+        Screen::SingleGpuSetup => screens::single_gpu_setup::handle_key(app, key)?,
+        Screen::SingleGpuInstructions => handle_single_gpu_instructions(app, key)?,
+        Screen::MultiGpuSetup => screens::multi_gpu_setup::handle_input(app, key)?,
         Screen::Confirm(action) => handle_confirm(app, action.clone(), key)?,
         Screen::Help => handle_help(app, key)?,
         Screen::Search => handle_search(app, key)?,
@@ -471,12 +495,17 @@ fn handle_main_menu(app: &mut App, key: KeyEvent) -> Result<()> {
 }
 
 fn handle_management(app: &mut App, key: KeyEvent) -> Result<()> {
+    use screens::management::{get_menu_items, menu_item_count, MenuAction};
+
+    let item_count = menu_item_count(app);
+
     match key.code {
         KeyCode::Esc => app.pop_screen(),
-        KeyCode::Char('j') | KeyCode::Down => app.menu_next(screens::management::MENU_ITEMS.len()),
+        KeyCode::Char('j') | KeyCode::Down => app.menu_next(item_count),
         KeyCode::Char('k') | KeyCode::Up => app.menu_prev(),
         KeyCode::Enter | KeyCode::Char('1') | KeyCode::Char('2') | KeyCode::Char('3') | KeyCode::Char('4') | KeyCode::Char('5') | KeyCode::Char('6') | KeyCode::Char('7') => {
-            let item = match key.code {
+            // Map number keys to menu index
+            let selected_idx = match key.code {
                 KeyCode::Char('1') => 0,
                 KeyCode::Char('2') => 1,
                 KeyCode::Char('3') => 2,
@@ -487,55 +516,79 @@ fn handle_management(app: &mut App, key: KeyEvent) -> Result<()> {
                 _ => app.selected_menu_item,
             };
 
-            match item {
-                0 => {
-                    app.selected_menu_item = 0;
-                    app.push_screen(Screen::BootOptions);
-                }
-                1 => {
-                    app.load_snapshots()?;
-                    app.push_screen(Screen::Snapshots);
-                }
-                2 => {
-                    app.load_usb_devices()?;
-                    // Load saved USB passthrough config and pre-select matching devices
-                    if let Some(vm) = app.selected_vm() {
-                        let saved = crate::vm::load_usb_passthrough(vm);
-                        app.selected_usb_devices.clear();
-                        for saved_dev in &saved {
-                            // Find matching device by vendor/product ID
-                            for (i, dev) in app.usb_devices.iter().enumerate() {
-                                if dev.vendor_id == saved_dev.vendor_id
-                                    && dev.product_id == saved_dev.product_id
-                                {
-                                    app.selected_usb_devices.push(i);
-                                    break;
+            // Get the menu items and find the action
+            if let Some(vm) = app.selected_vm() {
+                let menu_items = get_menu_items(vm, &app.config);
+                if let Some(item) = menu_items.get(selected_idx) {
+                    match item.action {
+                        MenuAction::BootOptions => {
+                            app.selected_menu_item = 0;
+                            app.push_screen(Screen::BootOptions);
+                        }
+                        MenuAction::Snapshots => {
+                            app.load_snapshots()?;
+                            app.push_screen(Screen::Snapshots);
+                        }
+                        MenuAction::UsbPassthrough => {
+                            app.load_usb_devices()?;
+                            // Load saved USB passthrough config and pre-select matching devices
+                            if let Some(vm) = app.selected_vm() {
+                                let saved = crate::vm::load_usb_passthrough(vm);
+                                app.selected_usb_devices.clear();
+                                for saved_dev in &saved {
+                                    // Find matching device by vendor/product ID
+                                    for (i, dev) in app.usb_devices.iter().enumerate() {
+                                        if dev.vendor_id == saved_dev.vendor_id
+                                            && dev.product_id == saved_dev.product_id
+                                        {
+                                            app.selected_usb_devices.push(i);
+                                            break;
+                                        }
+                                    }
                                 }
                             }
+                            app.selected_menu_item = 0;
+                            app.push_screen(Screen::UsbDevices);
+                        }
+                        MenuAction::PciPassthrough => {
+                            app.load_pci_devices()?;
+                            app.selected_menu_item = 0;
+                            app.push_screen(Screen::PciPassthrough);
+                        }
+                        MenuAction::MultiGpuPassthrough => {
+                            // Load PCI devices for multi-GPU setup
+                            app.load_pci_devices()?;
+                            app.push_screen(Screen::MultiGpuSetup);
+                        }
+                        MenuAction::SingleGpuPassthrough => {
+                            // Load PCI devices and initialize single GPU config
+                            app.load_pci_devices()?;
+                            screens::single_gpu_setup::init_single_gpu_config(app);
+                            app.single_gpu_selected_field = 0;
+                            app.push_screen(Screen::SingleGpuSetup);
+                        }
+                        MenuAction::ChangeDisplay => {
+                            app.selected_menu_item = 0;
+                            app.push_screen(Screen::DisplayOptions);
+                        }
+                        MenuAction::RenameVm => {
+                            if let Some(vm) = app.selected_vm() {
+                                app.text_input_buffer = vm.display_name();
+                            }
+                            app.push_screen(Screen::TextInput(TextInputContext::RenameVm));
+                        }
+                        MenuAction::ResetVm => {
+                            app.push_screen(Screen::Confirm(ConfirmAction::ResetVm));
+                        }
+                        MenuAction::DeleteVm => {
+                            app.push_screen(Screen::Confirm(ConfirmAction::DeleteVm));
+                        }
+                        MenuAction::EditRawConfig => {
+                            app.load_script_into_editor();
+                            app.push_screen(Screen::RawScript);
                         }
                     }
-                    app.selected_menu_item = 0;
-                    app.push_screen(Screen::UsbDevices);
                 }
-                3 => {
-                    // Change Display
-                    app.selected_menu_item = 0;
-                    app.push_screen(Screen::DisplayOptions);
-                }
-                4 => {
-                    // Rename VM - pre-fill with current name
-                    if let Some(vm) = app.selected_vm() {
-                        app.text_input_buffer = vm.display_name();
-                    }
-                    app.push_screen(Screen::TextInput(TextInputContext::RenameVm));
-                }
-                5 => app.push_screen(Screen::Confirm(ConfirmAction::ResetVm)),
-                6 => app.push_screen(Screen::Confirm(ConfirmAction::DeleteVm)),
-                7 => {
-                    app.load_script_into_editor();
-                    app.push_screen(Screen::RawScript);
-                }
-                _ => {}
             }
         }
         _ => {}
@@ -938,11 +991,30 @@ fn handle_usb_devices(app: &mut App, key: KeyEvent) -> Result<()> {
                     Ok(()) => {
                         // Reload the script so changes are visible in raw script viewer
                         app.reload_selected_vm_script();
-                        if count > 0 {
-                            app.set_status(format!("Saved {} USB device(s) to launch.sh", count));
+
+                        let mut status_msg = if count > 0 {
+                            format!("Saved {} USB device(s) to launch.sh", count)
                         } else {
-                            app.set_status("Cleared USB passthrough from launch.sh");
+                            "Cleared USB passthrough from launch.sh".to_string()
+                        };
+
+                        // Regenerate single-GPU scripts if they exist
+                        // USB devices are important for single-GPU since there's no graphical session
+                        if let (Some(vm), Some(config)) = (app.selected_vm(), app.single_gpu_config.as_ref()) {
+                            if crate::hardware::scripts_exist(&vm.path) {
+                                match crate::vm::single_gpu_scripts::regenerate_if_exists(vm, config) {
+                                    Ok(true) => {
+                                        status_msg.push_str("; single-GPU scripts regenerated");
+                                    }
+                                    Ok(false) => {} // Scripts don't exist, nothing to regenerate
+                                    Err(e) => {
+                                        status_msg.push_str(&format!("; warning: failed to regenerate single-GPU scripts: {}", e));
+                                    }
+                                }
+                            }
                         }
+
+                        app.set_status(status_msg);
                     }
                     Err(e) => {
                         app.set_status(format!("Error saving USB config: {}", e));
@@ -1459,6 +1531,17 @@ fn handle_error_dialog(app: &mut App, key: KeyEvent) -> Result<()> {
         }
         KeyCode::Char('k') | KeyCode::Up => {
             app.error_scroll = app.error_scroll.saturating_sub(1);
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
+fn handle_single_gpu_instructions(app: &mut App, key: KeyEvent) -> Result<()> {
+    match key.code {
+        KeyCode::Esc | KeyCode::Enter => {
+            app.single_gpu_show_instructions = false;
+            app.pop_screen();
         }
         _ => {}
     }
