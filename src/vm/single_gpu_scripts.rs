@@ -480,10 +480,8 @@ fn generate_variable_definitions(vm: &DiscoveredVm, components: &LaunchScriptCom
         vars.push(format!("DISK=\"{}\"", disk.path.display()));
     }
 
-    // Add ISO variable if present
-    if let Some(ref iso_var) = components.iso_var {
-        vars.push(iso_var.clone());
-    }
+    // Note: ISO variable intentionally NOT included - single-GPU passthrough is for
+    // running installed VMs, not installation. Use standard launch.sh for installation.
 
     // Add OVMF paths if UEFI
     if components.has_uefi {
@@ -1088,6 +1086,18 @@ fn extract_qemu_command_for_passthrough(
     qemu_cmd = audio_re.replace_all(&qemu_cmd, "").to_string();
     let soundhw_re = regex::Regex::new(r"-device\s+(intel-hda|ich9-intel-hda|hda-duplex|hda-micro|hda-output|AC97|sb16)[,\s]?[^\s\\]*").unwrap();
     qemu_cmd = soundhw_re.replace_all(&qemu_cmd, "").to_string();
+
+    // Remove CD-ROM/ISO arguments - single-GPU passthrough is for running installed VMs,
+    // not installation. Use standard launch.sh for installation.
+    // Remove -cdrom <path> arguments
+    let cdrom_re = regex::Regex::new(r#"-cdrom\s+("[^"]+"|'[^']+'|\$\w+|\S+)"#).unwrap();
+    qemu_cmd = cdrom_re.replace_all(&qemu_cmd, "").to_string();
+    // Remove -drive arguments with media=cdrom
+    let drive_cdrom_re = regex::Regex::new(r"-drive\s+[^\s\\]*media=cdrom[^\s\\]*").unwrap();
+    qemu_cmd = drive_cdrom_re.replace_all(&qemu_cmd, "").to_string();
+    // Remove -drive arguments referencing $ISO variable
+    let drive_iso_re = regex::Regex::new(r#"-drive\s+[^\s\\]*file="\$ISO"[^\s\\]*"#).unwrap();
+    qemu_cmd = drive_iso_re.replace_all(&qemu_cmd, "").to_string();
 
     // Clean up empty continuation lines
     let empty_cont_re = regex::Regex::new(r"\\\n\s*\\\n").unwrap();

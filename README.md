@@ -10,6 +10,10 @@ Please see [discussion](https://github.com/mroboff/vm-curator/discussions/11) fo
 
 ### Changelog
 
+**v0.2.4**
+- Remove CD-ROM/ISO from single-GPU passthrough scripts (installation should use standard launch.sh)
+- Fix sync issues between PCI/USB device selection and single-GPU passthrough script regeneration
+
 **v0.2.3**
 - Add USB 3.0 controller support for USB passthrough (xHCI controller for SuperSpeed devices)
 
