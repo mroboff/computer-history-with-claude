@@ -10,6 +10,9 @@ Please see [discussion](https://github.com/mroboff/vm-curator/discussions/11) fo
 
 ### Changelog
 
+**v0.2.6**
+- Fix PCI Passthrough screen to pre-select previously saved devices
+
 **v0.2.5**
 - Fix single-GPU passthrough scripts to bind extra PCI devices (NICs, USB controllers, NVMe) to vfio-pci
 
