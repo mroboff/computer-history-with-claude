@@ -1,13 +1,14 @@
 use anyhow::Result;
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::time::Instant;
 
 use crate::config::Config;
 use crate::hardware::{MultiGpuPassthroughStatus, PciDevice, SingleGpuConfig, UsbDevice};
-use crate::metadata::{AsciiArtStore, HierarchyConfig, MetadataStore, OsInfo, QemuProfileStore, SettingsHelpStore};
+use crate::metadata::{AsciiArtStore, HierarchyConfig, MetadataStore, OsInfo, QemuProfileStore, SettingsHelpStore, SharedFoldersHelpStore};
 use crate::ui::widgets::build_visual_order;
-use crate::vm::{discover_vms, BootMode, DiscoveredVm, LaunchOptions, Snapshot};
+use crate::vm::{discover_vms, BootMode, DiscoveredVm, LaunchOptions, QemuProcess, SharedFolder, Snapshot};
 
 /// Application screens/views
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -34,6 +35,8 @@ pub enum Screen {
     UsbDevices,
     /// PCI device selection for passthrough
     PciPassthrough,
+    /// Shared folder management (virtio-9p)
+    SharedFolders,
     /// Single GPU passthrough setup
     SingleGpuSetup,
     /// Single GPU passthrough instructions dialog
@@ -79,6 +82,8 @@ pub enum ConfirmAction {
     DeleteSnapshot(String),
     RestoreSnapshot(String),
     DiscardScriptChanges,
+    StopVm,
+    ForceStopVm,
 }
 
 /// Input mode for text entry
@@ -94,6 +99,7 @@ pub enum FileBrowserMode {
     #[default]
     Iso,
     Disk,
+    Directory,
 }
 
 /// Action to take with an existing disk when using it for a new VM
@@ -555,6 +561,10 @@ pub struct App {
     pub pci_devices: Vec<PciDevice>,
     /// Selected PCI devices for passthrough
     pub selected_pci_devices: Vec<usize>,
+    /// Shared folders for the current VM
+    pub shared_folders: Vec<SharedFolder>,
+    /// Selected shared folder index
+    pub shared_folder_selected: usize,
     /// Multi-GPU passthrough status (prerequisites)
     pub multi_gpu_status: Option<MultiGpuPassthroughStatus>,
     /// Selected management menu item
@@ -611,6 +621,8 @@ pub struct App {
     pub qemu_profiles: QemuProfileStore,
     /// Settings help text store
     pub settings_help: SettingsHelpStore,
+    /// Shared folders help text store
+    pub shared_folders_help: SharedFoldersHelpStore,
     /// VM creation wizard state
     pub wizard_state: Option<CreateWizardState>,
     /// Settings screen selected item
@@ -621,6 +633,16 @@ pub struct App {
     pub settings_edit_buffer: String,
     /// GPU passthrough validation result for settings screen
     pub settings_gpu_validation: Option<crate::ui::screens::settings::GpuValidationResult>,
+    /// Cached display capabilities per emulator (populated at startup)
+    pub display_capabilities: HashMap<String, Vec<String>>,
+
+    // === VM Process Monitoring ===
+    /// Receives QEMU process info from background detection thread
+    pub vm_status_rx: Receiver<Vec<QemuProcess>>,
+    /// Map of vm_id -> PID for currently running VMs
+    pub running_vms: HashMap<String, u32>,
+    /// Map of vm_id -> when SIGTERM was sent (for force-stop timeout)
+    pub stopping_vms: HashMap<String, Instant>,
 
     // === Single GPU Passthrough ===
     /// Single GPU passthrough configuration
@@ -694,11 +716,36 @@ impl App {
         let user_help_path = config_dir.join("settings_help.toml");
         settings_help.load_user_overrides(&user_help_path);
 
-        // Step 6: Build visual order
+        // Load shared folders help text
+        let mut shared_folders_help = SharedFoldersHelpStore::load_embedded();
+        shared_folders_help.load_user_overrides(&config_dir.join("shared_folders_help.toml"));
+
+        // Step 6: Build visual order and detect display capabilities
         progress(6, TOTAL_STEPS, "Building VM list...");
         let filtered_indices: Vec<usize> = (0..vms.len()).collect();
         let visual_order = build_visual_order(&vms, &filtered_indices, &hierarchy, &metadata);
         let (background_tx, background_rx) = mpsc::channel();
+
+        // Detect display capabilities for each available emulator
+        let mut display_capabilities = HashMap::new();
+        for emulator in crate::commands::qemu_system::list_available_emulators() {
+            let displays = crate::commands::qemu_system::get_supported_displays(&emulator);
+            if !displays.is_empty() {
+                display_capabilities.insert(emulator, displays);
+            }
+        }
+
+        // Spawn background VM status detection thread
+        let (vm_status_tx, vm_status_rx) = mpsc::channel();
+        std::thread::spawn(move || {
+            loop {
+                std::thread::sleep(std::time::Duration::from_secs(3));
+                let processes = crate::vm::detect_qemu_processes();
+                if vm_status_tx.send(processes).is_err() {
+                    break; // Receiver dropped (app exited)
+                }
+            }
+        });
 
         Ok(Self {
             screen: Screen::MainMenu,
@@ -715,6 +762,8 @@ impl App {
             selected_usb_devices: Vec::new(),
             pci_devices: Vec::new(),
             selected_pci_devices: Vec::new(),
+            shared_folders: Vec::new(),
+            shared_folder_selected: 0,
             multi_gpu_status: None,
             selected_menu_item: 0,
             boot_mode: BootMode::Normal,
@@ -743,17 +792,55 @@ impl App {
             script_editor_h_scroll: 0,
             qemu_profiles,
             settings_help,
+            shared_folders_help,
             wizard_state: None,
             settings_selected: 0,
             settings_editing: false,
             settings_edit_buffer: String::new(),
             settings_gpu_validation: None,
+            display_capabilities,
+
+            // VM Process Monitoring
+            vm_status_rx,
+            running_vms: HashMap::new(),
+            stopping_vms: HashMap::new(),
 
             // Single GPU Passthrough
             single_gpu_config: None,
             single_gpu_selected_field: 0,
             single_gpu_show_instructions: false,
         })
+    }
+
+    /// Get display options for an emulator, filtered and ordered.
+    ///
+    /// Returns detected display backends for the emulator, preferring `spice-app`
+    /// over `spice`. Falls back to a default list if detection returned nothing.
+    pub fn get_display_options_for_emulator(&self, emulator: &str) -> Vec<String> {
+        // Preferred order of display backends
+        let preferred_order = ["gtk", "sdl", "spice-app", "vnc", "none"];
+
+        if let Some(detected) = self.display_capabilities.get(emulator) {
+            let mut result = Vec::new();
+            // Add backends in preferred order if they were detected
+            for &pref in &preferred_order {
+                if detected.iter().any(|d| d == pref) {
+                    result.push(pref.to_string());
+                }
+            }
+            // Add any remaining detected backends not in preferred order
+            for d in detected {
+                if !result.iter().any(|r| r == d) && d != "spice" {
+                    result.push(d.clone());
+                }
+            }
+            if !result.is_empty() {
+                return result;
+            }
+        }
+
+        // Fallback: default list
+        preferred_order.iter().map(|s| s.to_string()).collect()
     }
 
     /// Get the currently selected VM
@@ -903,6 +990,52 @@ impl App {
         Ok(())
     }
 
+    /// Load shared folders for the current VM
+    pub fn load_shared_folders(&mut self) {
+        self.shared_folders.clear();
+        self.shared_folder_selected = 0;
+
+        if let Some(vm) = self.selected_vm() {
+            self.shared_folders = crate::vm::load_shared_folders(vm);
+        }
+    }
+
+    /// Add a shared folder, generating a unique mount tag
+    pub fn add_shared_folder(&mut self, host_path: String) {
+        // Reject duplicate paths
+        if self.shared_folders.iter().any(|f| f.host_path == host_path) {
+            return;
+        }
+
+        let mut mount_tag = generate_mount_tag(&host_path);
+
+        // Ensure unique mount tag
+        let base_tag = mount_tag.clone();
+        let mut suffix = 2;
+        while self.shared_folders.iter().any(|f| f.mount_tag == mount_tag) {
+            mount_tag = format!("{}_{}", base_tag, suffix);
+            suffix += 1;
+        }
+
+        self.shared_folders.push(SharedFolder {
+            host_path,
+            mount_tag,
+        });
+    }
+
+    /// Remove the currently selected shared folder
+    pub fn remove_shared_folder(&mut self) {
+        if !self.shared_folders.is_empty() && self.shared_folder_selected < self.shared_folders.len()
+        {
+            self.shared_folders.remove(self.shared_folder_selected);
+            if self.shared_folder_selected >= self.shared_folders.len()
+                && self.shared_folder_selected > 0
+            {
+                self.shared_folder_selected -= 1;
+            }
+        }
+    }
+
     /// Toggle PCI device selection
     pub fn toggle_pci_device(&mut self, index: usize) {
         // Don't allow selecting boot VGA
@@ -1047,6 +1180,57 @@ impl App {
         }
     }
 
+    /// Non-blocking check for VM status updates from background thread.
+    /// Consumes all pending messages, keeping only the latest result.
+    pub fn check_vm_status(&mut self) {
+        let mut latest = None;
+        while let Ok(processes) = self.vm_status_rx.try_recv() {
+            latest = Some(processes);
+        }
+        if let Some(processes) = latest {
+            self.running_vms = self.match_running_vms(&processes);
+            // Clean up stopping_vms for VMs that have actually stopped
+            self.stopping_vms.retain(|id, _| self.running_vms.contains_key(id));
+        }
+    }
+
+    /// Match QEMU processes against known VMs using the process working directory.
+    ///
+    /// Launch scripts run QEMU from the VM's directory, so /proc/<pid>/cwd
+    /// reliably identifies which VM a process belongs to — unlike disk filenames
+    /// which are often generic (e.g., "disk.qcow2").
+    fn match_running_vms(&self, processes: &[QemuProcess]) -> HashMap<String, u32> {
+        let mut result = HashMap::new();
+        for vm in &self.vms {
+            for proc in processes {
+                if let Some(ref cwd) = proc.cwd {
+                    // cwd is available — use it as the authoritative match
+                    if cwd == &vm.path {
+                        result.insert(vm.id.clone(), proc.pid);
+                        break;
+                    }
+                } else {
+                    // No cwd available (permissions?) — fall back to full disk path in cmdline
+                    if let Some(disk) = vm.config.primary_disk() {
+                        if let Some(disk_path_str) = disk.path.to_str() {
+                            if !disk_path_str.is_empty() && proc.cmdline.contains(disk_path_str) {
+                                result.insert(vm.id.clone(), proc.pid);
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        result
+    }
+
+    /// Get PID of the currently selected VM if it's running.
+    pub fn selected_vm_pid(&self) -> Option<u32> {
+        let vm = self.selected_vm()?;
+        self.running_vms.get(&vm.id).copied()
+    }
+
     /// Load file browser entries for current directory
     pub fn load_file_browser(&mut self, mode: FileBrowserMode) {
         self.file_browser_mode = mode;
@@ -1057,7 +1241,17 @@ impl App {
         let extensions: &[&str] = match mode {
             FileBrowserMode::Iso => &[".iso", ".ISO"],
             FileBrowserMode::Disk => &[".qcow2", ".QCOW2", ".qcow", ".QCOW"],
+            FileBrowserMode::Directory => &[],
         };
+
+        // For Directory mode, add a [Select This Directory] sentinel entry first
+        if mode == FileBrowserMode::Directory {
+            self.file_browser_entries.push(FileBrowserEntry {
+                name: "[Select This Directory]".to_string(),
+                path: self.file_browser_dir.clone(),
+                is_dir: false, // So Enter returns it as a selection
+            });
+        }
 
         // Add parent directory entry if not at root
         if let Some(parent) = self.file_browser_dir.parent() {
@@ -1087,7 +1281,9 @@ impl App {
                     };
                     if metadata.is_dir() {
                         dirs.push(entry);
-                    } else if extensions.iter().any(|ext| entry.name.ends_with(ext)) {
+                    } else if mode != FileBrowserMode::Directory
+                        && extensions.iter().any(|ext| entry.name.ends_with(ext))
+                    {
                         files.push(entry);
                     }
                 }
@@ -1324,4 +1520,30 @@ impl App {
             .and_then(|s| s.selected_os.as_ref())
             .and_then(|os_id| self.qemu_profiles.get(os_id))
     }
+}
+
+/// Generate a mount tag from a host directory path
+fn generate_mount_tag(path: &str) -> String {
+    let folder_name = std::path::Path::new(path)
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("shared");
+    let sanitized: String = folder_name
+        .to_lowercase()
+        .chars()
+        .map(|c| if c.is_alphanumeric() { c } else { '_' })
+        .collect();
+    let tag = sanitized
+        .split('_')
+        .filter(|s| !s.is_empty())
+        .collect::<Vec<_>>()
+        .join("_");
+    format!(
+        "host_{}",
+        if tag.is_empty() {
+            "shared".to_string()
+        } else {
+            tag
+        }
+    )
 }

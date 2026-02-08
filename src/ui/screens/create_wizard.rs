@@ -1542,7 +1542,7 @@ fn handle_step_configure_disk(app: &mut App, key: KeyEvent) -> Result<()> {
 const VGA_OPTIONS: &[&str] = &["std", "virtio", "qxl", "cirrus", "vmware", "none"];
 const NETWORK_OPTIONS: &[&str] = &["virtio", "e1000", "rtl8139", "ne2k_pci", "pcnet", "none"];
 const DISK_INTERFACE_OPTIONS: &[&str] = &["virtio", "ide", "sata", "scsi"];
-const DISPLAY_OPTIONS: &[&str] = &["gtk", "sdl", "spice", "vnc"];
+const DISPLAY_OPTIONS: &[&str] = &["gtk", "sdl", "spice-app", "vnc", "none"];
 const AUDIO_OPTIONS: &[(&str, &[&str])] = &[
     ("Intel HDA", &["intel-hda", "hda-duplex"]),
     ("AC97", &["ac97"]),
@@ -1558,6 +1558,9 @@ enum QemuField {
     Vga,
     Audio,
     Network,
+    NetBackend,
+    BridgeName,
+    PortForwards,
     DiskInterface,
     Display,
     Kvm,
@@ -1576,19 +1579,22 @@ impl QemuField {
             2 => Self::Vga,
             3 => Self::Audio,
             4 => Self::Network,
-            5 => Self::DiskInterface,
-            6 => Self::Display,
-            7 => Self::Kvm,
-            8 => Self::GlAccel,
-            9 => Self::Uefi,
-            10 => Self::Tpm,
-            11 => Self::UsbTablet,
+            5 => Self::NetBackend,
+            6 => Self::BridgeName,
+            7 => Self::PortForwards,
+            8 => Self::DiskInterface,
+            9 => Self::Display,
+            10 => Self::Kvm,
+            11 => Self::GlAccel,
+            12 => Self::Uefi,
+            13 => Self::Tpm,
+            14 => Self::UsbTablet,
             _ => Self::RtcLocal,
         }
     }
 
     fn count() -> usize {
-        13
+        16
     }
 }
 
@@ -1707,7 +1713,7 @@ fn render_step_configure_qemu(app: &App, frame: &mut Frame, area: Rect) {
         "[←/→] cycle",
     ));
 
-    // Network (cycle)
+    // Network adapter (cycle)
     let net_selected = focus == 4;
     lines.push(render_field_line(
         "Network:",
@@ -1717,8 +1723,57 @@ fn render_step_configure_qemu(app: &App, frame: &mut Frame, area: Rect) {
         "[←/→] cycle",
     ));
 
+    // Network backend (cycle) - hidden if network model is "none"
+    if config.network_model != "none" {
+        let backend_selected = focus == 5;
+        let backend_display = match config.network_backend.as_str() {
+            "user" => "user/SLIRP (NAT)".to_string(),
+            "passt" => "passt".to_string(),
+            "bridge" => format!("bridge ({})", config.bridge_name.as_deref().unwrap_or("qemubr0")),
+            "none" => "none".to_string(),
+            other => other.to_string(),
+        };
+        lines.push(render_field_line(
+            "Net Backend:",
+            &backend_display,
+            backend_selected,
+            false,
+            "[←/→] cycle",
+        ));
+
+        // Bridge name (only for bridge backend)
+        if config.network_backend == "bridge" {
+            let bridge_selected = focus == 6;
+            let bridge_display = config.bridge_name.as_deref().unwrap_or("qemubr0");
+            lines.push(render_field_line(
+                "Bridge:",
+                bridge_display,
+                bridge_selected,
+                false,
+                "[←/→] cycle",
+            ));
+        }
+
+        // Port forwards (only for user/passt)
+        if config.network_backend == "user" || config.network_backend == "passt" {
+            let pf_selected = focus == 7;
+            let pf_display = if config.port_forwards.is_empty() {
+                "none".to_string()
+            } else {
+                format!("{} rule(s)", config.port_forwards.len())
+            };
+            lines.push(render_field_line(
+                "Forwards:",
+                &pf_display,
+                pf_selected,
+                false,
+                "[Enter] edit",
+            ));
+        }
+    }
+
     // Disk Interface (cycle)
-    let disk_selected = focus == 5;
+    let disk_selected = focus == 8;
     lines.push(render_field_line(
         "Disk I/F:",
         &config.disk_interface,
@@ -1728,7 +1783,7 @@ fn render_step_configure_qemu(app: &App, frame: &mut Frame, area: Rect) {
     ));
 
     // Display (cycle)
-    let disp_selected = focus == 6;
+    let disp_selected = focus == 9;
     lines.push(render_field_line(
         "Display:",
         &config.display,
@@ -1741,27 +1796,27 @@ fn render_step_configure_qemu(app: &App, frame: &mut Frame, area: Rect) {
     lines.push(Line::styled("  Features (toggle with Space):", Style::default().fg(Color::DarkGray)));
 
     // KVM toggle
-    let kvm_selected = focus == 7;
+    let kvm_selected = focus == 10;
     lines.push(render_toggle_line("KVM Accel:", config.enable_kvm, kvm_selected));
 
     // 3D/GL acceleration toggle
-    let gl_selected = focus == 8;
+    let gl_selected = focus == 11;
     lines.push(render_toggle_line("3D Accel:", config.gl_acceleration, gl_selected));
 
     // UEFI toggle
-    let uefi_selected = focus == 9;
+    let uefi_selected = focus == 12;
     lines.push(render_toggle_line("UEFI Boot:", config.uefi, uefi_selected));
 
     // TPM toggle
-    let tpm_selected = focus == 10;
+    let tpm_selected = focus == 13;
     lines.push(render_toggle_line("TPM 2.0:", config.tpm, tpm_selected));
 
     // USB Tablet toggle
-    let usb_selected = focus == 11;
+    let usb_selected = focus == 14;
     lines.push(render_toggle_line("USB Tablet:", config.usb_tablet, usb_selected));
 
     // RTC Local toggle
-    let rtc_selected = focus == 12;
+    let rtc_selected = focus == 15;
     lines.push(render_toggle_line("RTC Local:", config.rtc_localtime, rtc_selected));
 
     let settings = Paragraph::new(lines);
@@ -1901,6 +1956,39 @@ fn get_field_notes(app: &App, focus: usize) -> String {
             pcnet: BSD compatible",
             os_name
         ),
+        QemuField::NetBackend => format!(
+            "Network backend for {}.\n\n\
+            user: NAT via SLIRP (default)\n  Works everywhere, no setup needed\n\n\
+            passt: Fast NAT, ping works\n  Requires passt package\n\n\
+            bridge: Full network access\n  VM gets own IP on LAN\n  One-time setup needed\n\n\
+            none: No networking",
+            os_name
+        ),
+        QemuField::BridgeName => {
+            let bridges = &app.network_caps.system_bridges;
+            let bridges_str = if bridges.is_empty() {
+                "No bridges detected on system.".to_string()
+            } else {
+                format!("Available: {}", bridges.join(", "))
+            };
+            format!(
+                "Network bridge for {}.\n\n\
+                {}\n\n\
+                The VM will get its own IP on the bridge network, \
+                providing full LAN access.\n\n\
+                Requires qemu-bridge-helper with proper permissions.",
+                os_name, bridges_str
+            )
+        },
+        QemuField::PortForwards => format!(
+            "Port forwarding for {}.\n\n\
+            Forward host ports to the VM for \
+            services like SSH, HTTP, RDP.\n\n\
+            Only available with user (NAT) and \
+            passt backends.\n\n\
+            Press Enter to edit forwarding rules.",
+            os_name
+        ),
         QemuField::DiskInterface => format!(
             "Disk interface for {}.\n\n\
             virtio: Best perf (needs driver)\n\
@@ -1913,8 +2001,9 @@ fn get_field_notes(app: &App, focus: usize) -> String {
             "Display output for {}.\n\n\
             gtk: Native Linux window\n\
             sdl: Cross-platform\n\
-            spice: Remote + features\n\
-            vnc: Remote access only",
+            spice-app: SPICE protocol (needs virt-viewer)\n\
+            vnc: Remote access only\n\
+            none: Headless, no graphical output",
             os_name
         ),
         QemuField::Kvm => "KVM hardware acceleration.\n\n\
@@ -1958,6 +2047,11 @@ fn get_field_notes(app: &App, focus: usize) -> String {
 
 fn handle_step_configure_qemu(app: &mut App, key: KeyEvent) -> Result<()> {
     let field_count = QemuField::count();
+
+    // Handle wizard port forward editing
+    if app.wizard_editing_port_forwards {
+        return handle_wizard_port_forward_editor(app, key);
+    }
 
     // Check if we're in edit mode for Memory or CPU
     let editing_memory = app.wizard_state.as_ref()
@@ -2031,7 +2125,17 @@ fn handle_step_configure_qemu(app: &mut App, key: KeyEvent) -> Result<()> {
             app.wizard_prev_step();
         }
         KeyCode::Enter => {
-            let _ = app.wizard_next_step();
+            // Check if on PortForwards field
+            let on_pf = app.wizard_state.as_ref()
+                .map(|s| QemuField::from_index(s.field_focus) == QemuField::PortForwards)
+                .unwrap_or(false);
+            if on_pf {
+                app.wizard_editing_port_forwards = true;
+                app.wizard_pf_selected = 0;
+                app.wizard_adding_pf = None;
+            } else {
+                let _ = app.wizard_next_step();
+            }
         }
         KeyCode::Tab => {
             // Enter edit mode for Memory or CPU fields
@@ -2067,6 +2171,14 @@ fn handle_step_configure_qemu(app: &mut App, key: KeyEvent) -> Result<()> {
         KeyCode::Left | KeyCode::Right => {
             let delta = if key.code == KeyCode::Right { 1i32 } else { -1i32 };
             handle_qemu_field_change(app, delta);
+            // Show warning if spice-app selected without viewer
+            if let Some(ref state) = app.wizard_state {
+                if state.qemu_config.display.contains("spice")
+                    && !crate::commands::qemu_system::is_spice_viewer_available()
+                {
+                    app.set_status("Warning: spice-app requires virt-viewer/remote-viewer to be installed");
+                }
+            }
         }
         KeyCode::Char(' ') => {
             // Toggle for boolean fields
@@ -2108,7 +2220,150 @@ fn handle_step_configure_qemu(app: &mut App, key: KeyEvent) -> Result<()> {
     Ok(())
 }
 
+fn handle_wizard_port_forward_editor(app: &mut App, key: KeyEvent) -> Result<()> {
+    use crate::app::{AddPfStep, AddingPortForward};
+    use crate::vm::qemu_config::{PortForward, PortProtocol};
+
+    // Handle adding mode
+    if let Some(ref mut adding) = app.wizard_adding_pf {
+        match key.code {
+            KeyCode::Esc => {
+                app.wizard_adding_pf = None;
+            }
+            KeyCode::Enter => {
+                match adding.step {
+                    AddPfStep::Protocol => {
+                        adding.step = AddPfStep::HostPort;
+                    }
+                    AddPfStep::HostPort => {
+                        if adding.host_port_input.parse::<u16>().is_ok() {
+                            adding.step = AddPfStep::GuestPort;
+                        }
+                    }
+                    AddPfStep::GuestPort => {
+                        if let (Ok(host), Ok(guest)) = (
+                            adding.host_port_input.parse::<u16>(),
+                            adding.guest_port_input.parse::<u16>(),
+                        ) {
+                            let pf = PortForward {
+                                protocol: adding.protocol,
+                                host_port: host,
+                                guest_port: guest,
+                            };
+                            if let Some(ref mut state) = app.wizard_state {
+                                state.qemu_config.port_forwards.push(pf);
+                            }
+                            app.wizard_adding_pf = None;
+                        }
+                    }
+                }
+            }
+            KeyCode::Left | KeyCode::Right => {
+                if adding.step == AddPfStep::Protocol {
+                    adding.protocol = match adding.protocol {
+                        PortProtocol::Tcp => PortProtocol::Udp,
+                        PortProtocol::Udp => PortProtocol::Tcp,
+                    };
+                }
+            }
+            KeyCode::Char(c) if c.is_ascii_digit() => {
+                match adding.step {
+                    AddPfStep::HostPort => adding.host_port_input.push(c),
+                    AddPfStep::GuestPort => adding.guest_port_input.push(c),
+                    _ => {}
+                }
+            }
+            KeyCode::Backspace => {
+                match adding.step {
+                    AddPfStep::HostPort => { adding.host_port_input.pop(); }
+                    AddPfStep::GuestPort => { adding.guest_port_input.pop(); }
+                    _ => {}
+                }
+            }
+            _ => {}
+        }
+        return Ok(());
+    }
+
+    // Normal port forward list mode
+    match key.code {
+        KeyCode::Esc => {
+            app.wizard_editing_port_forwards = false;
+        }
+        KeyCode::Char('j') | KeyCode::Down => {
+            let pf_len = app.wizard_state.as_ref()
+                .map(|s| s.qemu_config.port_forwards.len())
+                .unwrap_or(0);
+            if app.wizard_pf_selected < pf_len.saturating_sub(1) {
+                app.wizard_pf_selected += 1;
+            }
+        }
+        KeyCode::Char('k') | KeyCode::Up => {
+            if app.wizard_pf_selected > 0 {
+                app.wizard_pf_selected -= 1;
+            }
+        }
+        KeyCode::Char('a') | KeyCode::Enter => {
+            app.wizard_adding_pf = Some(AddingPortForward {
+                step: AddPfStep::Protocol,
+                protocol: PortProtocol::Tcp,
+                host_port_input: String::new(),
+                guest_port_input: String::new(),
+            });
+        }
+        KeyCode::Char('d') | KeyCode::Delete => {
+            if let Some(ref mut state) = app.wizard_state {
+                if !state.qemu_config.port_forwards.is_empty()
+                    && app.wizard_pf_selected < state.qemu_config.port_forwards.len()
+                {
+                    state.qemu_config.port_forwards.remove(app.wizard_pf_selected);
+                    if app.wizard_pf_selected >= state.qemu_config.port_forwards.len()
+                        && app.wizard_pf_selected > 0
+                    {
+                        app.wizard_pf_selected -= 1;
+                    }
+                }
+            }
+        }
+        // Presets
+        KeyCode::Char('1') => add_wizard_preset(app, PortProtocol::Tcp, 2222, 22),
+        KeyCode::Char('2') => add_wizard_preset(app, PortProtocol::Tcp, 13389, 3389),
+        KeyCode::Char('3') => add_wizard_preset(app, PortProtocol::Tcp, 8080, 80),
+        KeyCode::Char('4') => add_wizard_preset(app, PortProtocol::Tcp, 8443, 443),
+        KeyCode::Char('5') => add_wizard_preset(app, PortProtocol::Tcp, 15900, 5900),
+        _ => {}
+    }
+    Ok(())
+}
+
+fn add_wizard_preset(app: &mut App, protocol: crate::vm::qemu_config::PortProtocol, host_port: u16, guest_port: u16) {
+    if let Some(ref mut state) = app.wizard_state {
+        if !state.qemu_config.port_forwards.iter().any(|pf| pf.host_port == host_port && pf.guest_port == guest_port) {
+            state.qemu_config.port_forwards.push(crate::vm::qemu_config::PortForward {
+                protocol,
+                host_port,
+                guest_port,
+            });
+        }
+    }
+}
+
 fn handle_qemu_field_change(app: &mut App, delta: i32) {
+    // Get dynamic display options based on the current emulator
+    let emulator = app.wizard_state.as_ref()
+        .map(|s| s.qemu_config.emulator.clone())
+        .unwrap_or_else(|| "qemu-system-x86_64".to_string());
+    let dynamic_display_options = app.get_display_options_for_emulator(&emulator);
+
+    // Collect network backend options before mutable borrow
+    let backend_options: Vec<String> = app.get_network_backend_options()
+        .iter()
+        .map(|(id, _)| id.to_string())
+        .collect();
+    let system_bridges = app.network_caps.system_bridges.clone();
+    let default_bridge = system_bridges.first().cloned()
+        .or_else(|| Some("qemubr0".to_string()));
+
     let Some(ref mut state) = app.wizard_state else { return };
     let field = QemuField::from_index(state.field_focus);
 
@@ -2131,11 +2386,41 @@ fn handle_qemu_field_change(app: &mut App, delta: i32) {
         QemuField::Network => {
             cycle_option(&mut state.qemu_config.network_model, NETWORK_OPTIONS, delta);
         }
+        QemuField::NetBackend => {
+            let backend_strs: Vec<&str> = backend_options.iter().map(|s| s.as_str()).collect();
+            cycle_option(&mut state.qemu_config.network_backend, &backend_strs, delta);
+
+            // Set default bridge name when switching to bridge
+            if state.qemu_config.network_backend == "bridge" && state.qemu_config.bridge_name.is_none() {
+                state.qemu_config.bridge_name = default_bridge.clone();
+            }
+        }
+        QemuField::BridgeName => {
+            // Cycle through available system bridges
+            if !system_bridges.is_empty() {
+                let current_bridge = state.qemu_config.bridge_name.as_deref().unwrap_or("");
+                let current_idx = system_bridges.iter()
+                    .position(|b| b == current_bridge)
+                    .unwrap_or(0);
+                let new_idx = (current_idx as i32 + delta)
+                    .rem_euclid(system_bridges.len() as i32) as usize;
+                state.qemu_config.bridge_name = Some(system_bridges[new_idx].clone());
+            }
+        }
+        QemuField::PortForwards => {
+            // Handled via Enter key, not left/right
+        }
         QemuField::DiskInterface => {
             cycle_option(&mut state.qemu_config.disk_interface, DISK_INTERFACE_OPTIONS, delta);
         }
         QemuField::Display => {
-            cycle_option(&mut state.qemu_config.display, DISPLAY_OPTIONS, delta);
+            // Use dynamic options from detected capabilities
+            let display_strs: Vec<&str> = dynamic_display_options.iter().map(|s| s.as_str()).collect();
+            if !display_strs.is_empty() {
+                cycle_option(&mut state.qemu_config.display, &display_strs, delta);
+            } else {
+                cycle_option(&mut state.qemu_config.display, DISPLAY_OPTIONS, delta);
+            }
         }
         // Toggles use space, not left/right
         _ => {}
@@ -2250,10 +2535,26 @@ fn render_step_confirm(app: &App, frame: &mut Frame, area: Rect) {
         Span::styled("Audio:          ", Style::default().fg(Color::Yellow)),
         Span::raw(config.audio.first().cloned().unwrap_or_else(|| "None".to_string())),
     ]));
+    let net_display = if config.network_model == "none" {
+        "none".to_string()
+    } else {
+        let backend_str = match config.network_backend.as_str() {
+            "passt" => "passt".to_string(),
+            "bridge" => format!("bridge ({})", config.bridge_name.as_deref().unwrap_or("qemubr0")),
+            "none" => "disabled".to_string(),
+            _ => "user/SLIRP (NAT)".to_string(),
+        };
+        format!("{} ({})", config.network_model, backend_str)
+    };
     lines.push(Line::from(vec![
         Span::styled("Network:        ", Style::default().fg(Color::Yellow)),
-        Span::raw(&config.network_model),
+        Span::raw(net_display),
     ]));
+    if !config.port_forwards.is_empty() {
+        for pf in &config.port_forwards {
+            lines.push(Line::from(format!("                {} {} -> {}", pf.protocol, pf.host_port, pf.guest_port)));
+        }
+    }
 
     let accel = if config.enable_kvm { "KVM enabled" } else { "No acceleration" };
     lines.push(Line::from(vec![

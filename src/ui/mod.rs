@@ -7,10 +7,10 @@ use ratatui::prelude::*;
 use ratatui::backend::CrosstermBackend;
 use regex::Regex;
 use std::io::Stdout;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use crate::app::{App, BackgroundResult, ConfirmAction, InputMode, Screen, TextInputContext};
-use crate::vm::{launch_vm_with_error_check, lifecycle::is_vm_running, BootMode};
+use crate::vm::{launch_vm_with_error_check, BootMode};
 use std::thread;
 
 /// Run the TUI application
@@ -23,6 +23,9 @@ pub fn run(terminal: &mut Terminal<CrosstermBackend<Stdout>>, app: &mut App) -> 
 
         // Check for background operation results
         app.check_background_results();
+
+        // Check for VM status updates from background thread
+        app.check_vm_status();
 
         // Poll with timeout to allow periodic checks
         if event::poll(Duration::from_millis(100))? {
@@ -184,7 +187,7 @@ fn execute_confirm_action(app: &mut App, action: ConfirmAction) -> Result<()> {
             app.pop_screen();
 
             if let Some(vm) = app.selected_vm().cloned() {
-                if is_vm_running(&vm) {
+                if app.running_vms.contains_key(&vm.id) {
                     app.set_status(format!("{} is already running", vm.display_name()));
                 } else {
                     let options = app.get_launch_options();
@@ -205,7 +208,7 @@ fn execute_confirm_action(app: &mut App, action: ConfirmAction) -> Result<()> {
         }
         ConfirmAction::ResetVm => {
             if let Some(vm) = app.selected_vm() {
-                if is_vm_running(vm) {
+                if app.running_vms.contains_key(&vm.id) {
                     app.set_status("Error: Cannot reset VM while it is running. Please shut down the VM first.");
                 } else if let Err(e) = crate::vm::lifecycle::reset_vm(vm) {
                     app.set_status(format!("Error: {}", e));
@@ -230,7 +233,7 @@ fn execute_confirm_action(app: &mut App, action: ConfirmAction) -> Result<()> {
         }
         ConfirmAction::RestoreSnapshot(name) => {
             if let Some(vm) = app.selected_vm() {
-                if is_vm_running(vm) {
+                if app.running_vms.contains_key(&vm.id) {
                     app.set_status("Error: Cannot restore snapshot while VM is running. Please shut down the VM first.");
                 } else if let Some(disk) = vm.config.primary_disk() {
                     let disk_path = disk.path.clone();
@@ -253,7 +256,7 @@ fn execute_confirm_action(app: &mut App, action: ConfirmAction) -> Result<()> {
         }
         ConfirmAction::DeleteSnapshot(name) => {
             if let Some(vm) = app.selected_vm() {
-                if is_vm_running(vm) {
+                if app.running_vms.contains_key(&vm.id) {
                     app.set_status("Error: Cannot delete snapshot while VM is running. Please shut down the VM first.");
                 } else if let Some(disk) = vm.config.primary_disk() {
                     let disk_path = disk.path.clone();
@@ -281,6 +284,40 @@ fn execute_confirm_action(app: &mut App, action: ConfirmAction) -> Result<()> {
             app.script_editor_modified = false;
             app.pop_screen(); // Close confirm dialog
             app.pop_screen(); // Close editor
+        }
+        ConfirmAction::StopVm => {
+            app.pop_screen();
+            if let Some(vm) = app.selected_vm().cloned() {
+                if let Some(pid) = app.running_vms.get(&vm.id).copied() {
+                    match crate::vm::stop_vm_by_pid(pid) {
+                        Ok(()) => {
+                            app.stopping_vms.insert(vm.id.clone(), Instant::now());
+                            app.set_status(format!("Stopping {}...", vm.display_name()));
+                        }
+                        Err(e) => {
+                            app.set_status(format!("Failed to stop {}: {}", vm.display_name(), e));
+                        }
+                    }
+                } else {
+                    app.set_status(format!("{} is not running", vm.display_name()));
+                }
+            }
+        }
+        ConfirmAction::ForceStopVm => {
+            app.pop_screen();
+            if let Some(vm) = app.selected_vm().cloned() {
+                if let Some(pid) = app.running_vms.get(&vm.id).copied() {
+                    match crate::vm::force_stop_vm(pid) {
+                        Ok(()) => {
+                            app.stopping_vms.remove(&vm.id);
+                            app.set_status(format!("Force stopped {}", vm.display_name()));
+                        }
+                        Err(e) => {
+                            app.set_status(format!("Failed to force stop {}: {}", vm.display_name(), e));
+                        }
+                    }
+                }
+            }
         }
     }
     Ok(())
@@ -341,6 +378,11 @@ fn render(app: &App, frame: &mut Frame) {
             screens::main_menu::render(app, frame);
             render_dim_overlay(frame);
             screens::pci_passthrough::render(app, frame);
+        }
+        Screen::SharedFolders => {
+            screens::main_menu::render(app, frame);
+            render_dim_overlay(frame);
+            screens::shared_folders::render(app, frame);
         }
         Screen::SingleGpuSetup => {
             screens::main_menu::render(app, frame);
@@ -437,6 +479,7 @@ fn handle_key(app: &mut App, key: KeyEvent) -> Result<()> {
         Screen::DisplayOptions => handle_display_options(app, key)?,
         Screen::UsbDevices => handle_usb_devices(app, key)?,
         Screen::PciPassthrough => screens::pci_passthrough::handle_key(app, key)?,
+        Screen::SharedFolders => screens::shared_folders::handle_key(app, key)?,
         Screen::SingleGpuSetup => screens::single_gpu_setup::handle_key(app, key)?,
         Screen::SingleGpuInstructions => handle_single_gpu_instructions(app, key)?,
         Screen::MultiGpuSetup => screens::multi_gpu_setup::handle_input(app, key)?,
@@ -491,6 +534,26 @@ fn handle_main_menu(app: &mut App, key: KeyEvent) -> Result<()> {
         KeyCode::Char('s') | KeyCode::Char('S') => {
             app.push_screen(Screen::Settings);
         }
+        KeyCode::Char('x') | KeyCode::Char('X') => {
+            if let Some(vm) = app.selected_vm().cloned() {
+                if app.selected_vm_pid().is_some() {
+                    if let Some(sent_at) = app.stopping_vms.get(&vm.id) {
+                        if sent_at.elapsed() > Duration::from_secs(10) {
+                            app.push_screen(Screen::Confirm(ConfirmAction::ForceStopVm));
+                        } else {
+                            app.set_status(format!(
+                                "Waiting for {} to shut down... (press x again after 10s to force)",
+                                vm.display_name()
+                            ));
+                        }
+                    } else {
+                        app.push_screen(Screen::Confirm(ConfirmAction::StopVm));
+                    }
+                } else {
+                    app.set_status("VM is not running");
+                }
+            }
+        }
         _ => {}
     }
     Ok(())
@@ -505,7 +568,7 @@ fn handle_management(app: &mut App, key: KeyEvent) -> Result<()> {
         KeyCode::Esc => app.pop_screen(),
         KeyCode::Char('j') | KeyCode::Down => app.menu_next(item_count),
         KeyCode::Char('k') | KeyCode::Up => app.menu_prev(),
-        KeyCode::Enter | KeyCode::Char('1') | KeyCode::Char('2') | KeyCode::Char('3') | KeyCode::Char('4') | KeyCode::Char('5') | KeyCode::Char('6') | KeyCode::Char('7') => {
+        KeyCode::Enter | KeyCode::Char('1') | KeyCode::Char('2') | KeyCode::Char('3') | KeyCode::Char('4') | KeyCode::Char('5') | KeyCode::Char('6') | KeyCode::Char('7') | KeyCode::Char('8') | KeyCode::Char('9') => {
             // Map number keys to menu index
             let selected_idx = match key.code {
                 KeyCode::Char('1') => 0,
@@ -515,6 +578,8 @@ fn handle_management(app: &mut App, key: KeyEvent) -> Result<()> {
                 KeyCode::Char('5') => 4,
                 KeyCode::Char('6') => 5,
                 KeyCode::Char('7') => 6,
+                KeyCode::Char('8') => 7,
+                KeyCode::Char('9') => 8,
                 _ => app.selected_menu_item,
             };
 
@@ -523,6 +588,26 @@ fn handle_management(app: &mut App, key: KeyEvent) -> Result<()> {
                 let menu_items = get_menu_items(vm, &app.config);
                 if let Some(item) = menu_items.get(selected_idx) {
                     match item.action {
+                        MenuAction::StopVm => {
+                            if let Some(vm) = app.selected_vm().cloned() {
+                                if app.selected_vm_pid().is_some() {
+                                    if let Some(sent_at) = app.stopping_vms.get(&vm.id) {
+                                        if sent_at.elapsed() > Duration::from_secs(10) {
+                                            app.push_screen(Screen::Confirm(ConfirmAction::ForceStopVm));
+                                        } else {
+                                            app.set_status(format!(
+                                                "Waiting for {} to shut down...",
+                                                vm.display_name()
+                                            ));
+                                        }
+                                    } else {
+                                        app.push_screen(Screen::Confirm(ConfirmAction::StopVm));
+                                    }
+                                } else {
+                                    app.set_status("VM is not running");
+                                }
+                            }
+                        }
                         MenuAction::BootOptions => {
                             app.selected_menu_item = 0;
                             app.push_screen(Screen::BootOptions);
@@ -578,6 +663,11 @@ fn handle_management(app: &mut App, key: KeyEvent) -> Result<()> {
                             }
                             app.selected_menu_item = 0;
                             app.push_screen(Screen::PciPassthrough);
+                        }
+                        MenuAction::SharedFolders => {
+                            app.load_shared_folders();
+                            app.selected_menu_item = 0;
+                            app.push_screen(Screen::SharedFolders);
                         }
                         MenuAction::MultiGpuPassthrough => {
                             // Load PCI devices for multi-GPU setup
@@ -851,7 +941,7 @@ fn handle_snapshots(app: &mut App, key: KeyEvent) -> Result<()> {
             // Create snapshot - open text input for name
             if let Some(vm) = app.selected_vm() {
                 // Warn if VM is running - snapshot operations on running VMs can cause corruption
-                if is_vm_running(vm) {
+                if app.running_vms.contains_key(&vm.id) {
                     app.set_status("Warning: VM is running. Snapshot may be inconsistent.");
                 }
                 // Pre-fill with timestamp-based suggestion
@@ -914,12 +1004,15 @@ fn handle_boot_options(app: &mut App, key: KeyEvent) -> Result<()> {
 }
 
 fn handle_display_options(app: &mut App, key: KeyEvent) -> Result<()> {
+    let display_options = screens::management::get_display_options(app);
+    let option_count = display_options.len();
+
     match key.code {
         KeyCode::Esc => {
             app.selected_menu_item = 3; // Reset to Change Display position in management menu
             app.pop_screen();
         }
-        KeyCode::Char('j') | KeyCode::Down => app.menu_next(screens::management::DISPLAY_OPTIONS.len()),
+        KeyCode::Char('j') | KeyCode::Down => app.menu_next(option_count),
         KeyCode::Char('k') | KeyCode::Up => app.menu_prev(),
         KeyCode::Enter | KeyCode::Char('1') | KeyCode::Char('2') | KeyCode::Char('3') | KeyCode::Char('4') => {
             let item = match key.code {
@@ -930,12 +1023,18 @@ fn handle_display_options(app: &mut App, key: KeyEvent) -> Result<()> {
                 _ => app.selected_menu_item,
             };
 
-            if let Some((display_name, _)) = screens::management::DISPLAY_OPTIONS.get(item) {
+            if let Some((display_name, _)) = display_options.get(item) {
+                let display_name = display_name.clone();
                 // Update the display setting in launch.sh
                 if let Some(vm) = app.selected_vm() {
-                    match update_vm_display(&vm.launch_script, display_name) {
+                    match update_vm_display(&vm.launch_script, &display_name) {
                         Ok(()) => {
-                            app.set_status(format!("Display changed to {}", display_name));
+                            // Show spice-app warning if viewer not installed
+                            if display_name.contains("spice") && !crate::commands::qemu_system::is_spice_viewer_available() {
+                                app.set_status(format!("Display changed to {}. Warning: virt-viewer/remote-viewer not found!", display_name));
+                            } else {
+                                app.set_status(format!("Display changed to {}", display_name));
+                            }
                             // Reload the script to reflect changes
                             app.reload_selected_vm_script();
                         }
@@ -958,7 +1057,8 @@ fn update_vm_display(script_path: &std::path::Path, new_display: &str) -> Result
     let content = std::fs::read_to_string(script_path)?;
 
     // Regex to match -display with optional gl=on suffix
-    let display_re = Regex::new(r"-display\s+(\w+)(,gl=on)?")?;
+    // Uses [\w-]+ to match hyphenated backends like spice-app
+    let display_re = Regex::new(r"-display\s+([\w-]+)(,gl=on)?")?;
 
     let new_content = if display_re.is_match(&content) {
         // Replace existing -display setting, preserving gl=on if present
@@ -1188,6 +1288,18 @@ fn render_confirm(app: &App, action: &ConfirmAction, frame: &mut Frame) {
         ConfirmAction::DiscardScriptChanges => {
             ("Discard Changes", "You have unsaved changes. Discard them?".to_string())
         }
+        ConfirmAction::StopVm => {
+            let name = app.selected_vm()
+                .map(|vm| vm.display_name())
+                .unwrap_or_else(|| "VM".to_string());
+            ("Stop VM", format!("Stop {}?", name))
+        }
+        ConfirmAction::ForceStopVm => {
+            let name = app.selected_vm()
+                .map(|vm| vm.display_name())
+                .unwrap_or_else(|| "VM".to_string());
+            ("Force Stop VM", format!("Force stop {}? This may cause data loss.", name))
+        }
     };
 
     ConfirmDialog::new(title, &message).render(frame.area(), frame.buffer_mut());
@@ -1328,6 +1440,7 @@ fn render_file_browser(app: &App, frame: &mut Frame) {
     let title_prefix = match app.file_browser_mode {
         FileBrowserMode::Iso => "Select ISO",
         FileBrowserMode::Disk => "Select Disk Image",
+        FileBrowserMode::Directory => "Select Directory",
     };
     let title = format!(" {} - {} ", title_prefix, app.file_browser_dir.display());
     let block = Block::default()
@@ -1364,6 +1477,7 @@ fn render_file_browser(app: &App, frame: &mut Frame) {
         let msg_text = match app.file_browser_mode {
             FileBrowserMode::Iso => "No ISO files found in this directory.",
             FileBrowserMode::Disk => "No disk images found in this directory.",
+            FileBrowserMode::Directory => "No subdirectories in this directory.",
         };
         let msg = ratatui::widgets::Paragraph::new(msg_text)
             .style(Style::default().fg(Color::DarkGray))
@@ -1375,7 +1489,13 @@ fn render_file_browser(app: &App, frame: &mut Frame) {
     let items: Vec<ListItem> = app.file_browser_entries
         .iter()
         .map(|entry| {
-            let prefix = if entry.is_dir { "📁 " } else { "💿 " };
+            let prefix = if entry.name == "[Select This Directory]" {
+                ">> "
+            } else if entry.is_dir {
+                "📁 "
+            } else {
+                "💿 "
+            };
             ListItem::new(format!("{}{}", prefix, entry.name))
         })
         .collect();
@@ -1429,6 +1549,11 @@ fn handle_file_browser(app: &mut App, key: KeyEvent) -> Result<()> {
                             state.existing_disk_path = Some(selected_path);
                         }
                         app.pop_screen(); // Close file browser, return to disk config step
+                    }
+                    FileBrowserMode::Directory => {
+                        // Directory selected (from [Select This Directory] entry)
+                        app.add_shared_folder(selected_path.to_string_lossy().to_string());
+                        app.pop_screen(); // Return to SharedFolders screen
                     }
                 }
             }
